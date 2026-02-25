@@ -977,10 +977,32 @@ elif not st.session_state.messages:
     )
 
 
-
+# Display math blocks like \[ ... \]
 _LATEX_DISPLAY_RE = re.compile(r"\\\[[\s\S]*?\\\]")
-_SECTION_NUMBER_TITLE_RE = re.compile(r"\b\d+(\.\d+)+\s+[A-Za-z].*")
-_SHORT_HEADING_COLON_RE = re.compile(r"^[A-Za-z\s\-]{1,40}:\s*$")
+
+# Label prefixes like "common structure:" or "Key idea:" at start of a line/paragraph
+_LABEL_PREFIX_RE = re.compile(r"^\s*[A-Za-z][A-Za-z\s\-]{0,40}:\s+")
+
+# Embedded numbered section headers like "8.9 Heuristic Search" anywhere in text
+# Matches: 1.2 Title, 8.9 Heuristic Search, 10.3.1 Something
+# Matches section numbers like 8.9 or 10.3.1, then removes the following heading phrase
+# up to a boundary (newline, double space, sentence end, colon).
+_EMBEDDED_SECTION_HEADING_RE = re.compile(
+    r"""
+    \b
+    \d+(?:\.\d+)+          # section number like 8.9 or 10.3.1
+    \s+                    # whitespace
+    (?:[^\n]*[A-Za-z][^\n]*){1,80}?          # up to 80 chars of heading text (non-newline), non-greedy
+    (?=                    # stop before boundary:
+        \n                 # newline
+      | \s{2,}              # double space
+      | \s*[:\-–—]\s        # colon/dash separators
+      | \.(?:\s|$)          # sentence end
+      | $                   # end of string
+    )
+    """,
+    re.VERBOSE,
+)
 
 def clean_raw_passage(text: str) -> str:
     if not text:
@@ -989,28 +1011,24 @@ def clean_raw_passage(text: str) -> str:
     # Remove display math blocks
     text = _LATEX_DISPLAY_RE.sub("", text)
 
-    lines = text.splitlines()
-    cleaned_lines = []
+    # Process paragraph by paragraph to remove label prefixes reliably
+    paras = [p.strip() for p in text.split("\n") if p.strip()]
+    out_paras = []
 
-    for line in lines:
-        line_stripped = line.strip()
+    for p in paras:
+        # Remove leading label prefix if present (e.g., "common structure: ")
+        p = _LABEL_PREFIX_RE.sub("", p)
 
-        if not line_stripped:
-            continue
+        # Remove embedded section titles anywhere
+        p = _EMBEDDED_SECTION_TITLE_RE.sub("", p)
 
-        # Remove numbered section headers like "8.9 Heuristic Search"
-        if _SECTION_NUMBER_TITLE_RE.match(line_stripped):
-            continue
+        # Normalize whitespace after removals
+        p = normalize_ws(p)
 
-        # Remove short heading lines ending in colon
-        if _SHORT_HEADING_COLON_RE.match(line_stripped):
-            continue
+        if p:
+            out_paras.append(p)
 
-        cleaned_lines.append(line_stripped)
-
-    text = " ".join(cleaned_lines)
-    text = normalize_ws(text)
-    return text
+    return "\n\n".join(out_paras).strip()
 
 # Chat history
 for msg in st.session_state.messages:

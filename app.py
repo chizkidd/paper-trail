@@ -446,36 +446,105 @@ def strip_leading_display_latex(s: str) -> str:
         return ""
     return _LATEX_LEADING_BLOCK_RE.sub("", s, count=1).strip()
 
+def select_sentences_mmr(
+    retriever: DocRetriever,
+    question: str,
+    sentences: List[str],
+    k: int = 2,
+    min_rel: float = 0.08,
+    lambda_div: float = 0.75,
+    max_chars: int = 320,
+) -> List[int]:
+    """
+    Maximal Marginal Relevance selection over sentences.
+
+    - maximizes relevance to question
+    - penalizes redundancy w.r.t already selected sentences
+    - returns sentence indices (in original order)
+    """
+    if not sentences:
+        return []
+
+    q_vec = retriever.vectorizer.transform([question])
+    s_mat = retriever.vectorizer.transform(sentences)
+
+    rel = cosine_similarity(q_vec, s_mat).flatten()  # relevance to question
+    sim = cosine_similarity(s_mat, s_mat)            # sentence-to-sentence similarity
+
+    # Candidate pool: only sentences above relevance threshold
+    candidates = [i for i, r in enumerate(rel) if r >= min_rel]
+    if not candidates:
+        return []
+
+    selected: List[int] = []
+    total_chars = 0
+
+    while candidates and len(selected) < k and total_chars < max_chars:
+        best_i = None
+        best_score = -1e9
+
+        for i in candidates:
+            # redundancy: max similarity to anything already selected
+            red = 0.0
+            if selected:
+                red = float(np.max(sim[i, selected]))
+
+            mmr = lambda_div * float(rel[i]) - (1.0 - lambda_div) * red
+
+            if mmr > best_score:
+                best_score = mmr
+                best_i = i
+
+        if best_i is None:
+            break
+
+        # enforce char budget
+        sent_len = len(sentences[best_i])
+        if selected and (total_chars + 1 + sent_len) > max_chars:
+            break
+
+        selected.append(best_i)
+        total_chars += sent_len + (1 if selected else 0)
+        candidates.remove(best_i)
+
+    return sorted(set(selected))
+
 def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) -> List[str]:
     sents = split_sentences(best_chunk)
     if not sents:
         return []
 
-    scores = retriever.score_sentences(question, sents)
-    if not scores:
+    # filter noise first
+    filtered = []
+    idx_map = []
+    for i, s in enumerate(sents):
+        if is_noise_sentence(s):
+            continue
+        s2 = strip_leading_display_latex(s)
+        if not s2:
+            continue
+        filtered.append(s2)
+        idx_map.append(i)
+
+    if not filtered:
         return []
 
-    ranked = np.argsort(np.array(scores))[::-1]
-    chosen = []
-    for idx in ranked:
-        if scores[idx] < 0.08:
-            continue
-        if is_noise_sentence(sents[idx]):
-            continue
-        chosen.append(int(idx))
-        if len(chosen) >= 2:
-            break
+    # select diverse, relevant sentences
+    chosen_filtered_idx = select_sentences_mmr(
+        retriever,
+        question,
+        filtered,
+        k=2,              # keep answer tight
+        min_rel=0.08,     # tune globally
+        lambda_div=0.75,  # more relevance than diversity
+        max_chars=320,
+    )
 
-    # If nothing passes, fallback to first non-noise sentence (cleaned)
-    if not chosen:
-        for s in sents:
-            if not is_noise_sentence(s):
-                cleaned = strip_leading_display_latex(s)
-                return [cleaned] if cleaned else []
-        return []
+    if not chosen_filtered_idx:
+        # fallback: first filtered sentence (already stripped)
+        return [filtered[0]]
 
-    chosen_sorted = sorted(set(chosen))
-    picked = [strip_leading_display_latex(sents[i]) for i in chosen_sorted]
+    picked = [filtered[j] for j in chosen_filtered_idx]
     picked = [x for x in picked if x]
     return picked
 

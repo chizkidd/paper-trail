@@ -9,6 +9,7 @@ import numpy as np
 import streamlit as st
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
 
 # ── Cross-encoder (sentence-transformers) ─────────────────────────────────────
 try:
@@ -404,6 +405,10 @@ def load_url(url: str) -> Tuple[str, dict, str]:
         return "", {}, f"Unexpected fetch error: {e}"
 
 
+@st.cache_resource
+def load_embedder():
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
 # ── Retriever ──────────────────────────────────────────────────────────────────
 class DocRetriever:
     def __init__(self, chunks: List[str],
@@ -412,6 +417,10 @@ class DocRetriever:
         self.chunks = chunks
         self.chunk_sections = chunk_sections or [""] * len(chunks)
         self.chunk_pages    = chunk_pages    or [None] * len(chunks)
+
+        self.embedder = load_embedder()
+        self.embeddings = self.embedder.encode(chunks, normalize_embeddings=True)
+
         self.vectorizer = TfidfVectorizer(
             ngram_range=(1, 2),
             max_features=30000,
@@ -419,6 +428,12 @@ class DocRetriever:
             sublinear_tf=True,
         )
         self.matrix = self.vectorizer.fit_transform(chunks)
+
+    def query(self, question: str, top_k: int = 20):
+        q_emb = self.embedder.encode([question], normalize_embeddings=True)
+        scores = np.dot(self.embeddings, q_emb[0])
+        top_idx = np.argsort(scores)[::-1][:top_k]
+        return [(self.chunks[i], float(scores[i]), int(i)) for i in top_idx]
 
     def query(self, question: str, top_k: int = 20) -> List[Tuple[str, float, int]]:
         """Returns (chunk_text, tfidf_score, chunk_index) — larger pool for reranker."""

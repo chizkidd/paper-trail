@@ -480,6 +480,16 @@ def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) 
     return picked
 
 
+_LATEX_DISPLAY_ANYWHERE_RE = re.compile(r"\\\[[\s\S]*?\\\]")
+
+def remove_display_latex_anywhere(s: str) -> str:
+    if not s:
+        return ""
+    # Remove all display-math blocks like \[ ... \]
+    s = _LATEX_DISPLAY_ANYWHERE_RE.sub("", s)
+    # Clean up extra whitespace created by removals
+    return normalize_ws(s)
+
 def _focused_supporting_passage(
     retriever: DocRetriever, question: str, best_chunk: str, answer_sents: List[str]
 ) -> str:
@@ -514,7 +524,9 @@ def _focused_supporting_passage(
 
         if keep:
             out = " ".join(sents[i] for i in sorted(keep)).strip()
-            return strip_leading_display_latex(out)
+            out = strip_leading_display_latex(out)
+            out = remove_display_latex_anywhere(out)
+            return out
 
     # fallback: top scored sentences
     scores = retriever.score_sentences(question, sents)
@@ -528,11 +540,15 @@ def _focused_supporting_passage(
             break
     if not pick:
         text = " ".join(sents[:4]).strip()
-        return strip_leading_display_latex(text)
+        out = strip_leading_display_latex(text)
+        out = remove_display_latex_anywhere(out)
+        return out
 
     pick_sorted = sorted(set(pick))
-    text = " ".join(sents[i] for i in pick_sorted).strip()
-    return strip_leading_display_latex(text)
+    out = " ".join(sents[i] for i in pick_sorted).strip()
+    out = strip_leading_display_latex(out)
+    out = remove_display_latex_anywhere(out)
+    return out
 
 
 def answer_question(retriever: DocRetriever, question: str) -> tuple:
@@ -756,7 +772,7 @@ for msg in st.session_state.messages:
         st.markdown(f'<div class="msg-bot">{msg["content"]}</div>', unsafe_allow_html=True)
         extras = msg.get("extras", [])
         if extras:
-            with st.expander("Show more passages"):
+            with st.expander("Show raw passages"):
                 for chunk, score in extras:
                     st.write(chunk)
 

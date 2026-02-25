@@ -233,12 +233,20 @@ def dedup_paragraphs(text: str) -> str:
 
     seen = set()
     out = []
+
     for p in paras:
         key = normalize_ws(p).lower()
         if not key:
             continue
+
+        # Keep short lines (likely headings or structural labels)
+        if len(key) < 40:
+            out.append(p)
+            continue
+
         if key in seen:
             continue
+
         seen.add(key)
         out.append(p)
 

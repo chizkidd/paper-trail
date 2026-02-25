@@ -116,14 +116,13 @@ Hybrid retrieval solves this while still preserving exact keyword matching.
 
 ## Extending Papertrail
 
-* Multi-document search with per-source ranking
-* Vector store backend (FAISS, Qdrant)
-* Persistent embedding cache
-* Structured citation formatting
-* Conversation memory across turns
-* Local LLM deployment instead of remote API
-* Support for `.docx`, `.csv`, or structured data inputs
-
+- [ ] Multi-document search with per-source ranking  
+- [ ] Vector store backend (FAISS, Qdrant)  
+- [ ] Persistent embedding cache  
+- [ ] Structured citation formatting  
+- [ ] Conversation memory across turns  
+- [ ] Local LLM deployment instead of remote API  
+- [ ] Support for `.docx`, `.csv`, or structured data inputs  
 ---
 
 ## Philosophy

@@ -424,6 +424,15 @@ def build_knowledge_base(text: str, source_name: str) -> str:
     except Exception as e:
         return f"Indexing error: {e}"
 
+def is_structural_sentence(s: str) -> bool:
+    # Ignore LaTeX-only or very short structural lines
+    s_norm = normalize_ws(s)
+    if len(s_norm) < 30:
+        return True
+    if s_norm.startswith("\\[") and s_norm.endswith("\\]"):
+        return True
+    return False
+
 
 def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) -> List[str]:
     """
@@ -442,10 +451,12 @@ def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) 
     ranked = np.argsort(np.array(scores))[::-1]
     chosen = []
     for idx in ranked:
-        if scores[idx] < 0.05:
+        if scores[idx] < 0.08:
+            continue
+        if is_structural_sentence(sents[idx]):
             continue
         chosen.append(idx)
-        if len(chosen) >= 3:
+        if len(chosen) >= 2:
             break
 
     if not chosen:
@@ -480,12 +491,12 @@ def _focused_supporting_passage(
             for i, s in enumerate(sents):
                 if a_norm and a_norm in normalize_ws(s):
                     idxs.add(i)
-                    break
+                    break 
 
         # Expand window around each found index
         keep = set()
         for i in idxs:
-            for j in range(max(0, i - 2), min(len(sents), i + 3)):
+            for j in range(max(0, i - 1), min(len(sents), i + 2)):
                 keep.add(j)
 
         if keep:
@@ -524,7 +535,7 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
 
     # Change #1: Extractive answer first
     answer_sents = _extractive_answer(retriever, question, best_chunk)
-    answer_text = " ".join(answer_sents).strip() if answer_sents else best_chunk
+    answer_text = " ".join(answer_sents) if answer_sents else split_sentences(best_chunk)[:2]
 
     # Change #3: Focused supporting passage
     focused = _focused_supporting_passage(retriever, question, best_chunk, answer_sents)

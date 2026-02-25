@@ -517,8 +517,18 @@ def generate_answer_hf(question: str, context: str) -> Tuple[str, bool]:
         headers["Authorization"] = f"Bearer {HF_TOKEN}"
     try:
         resp = requests.post(
-            HF_API_URL, headers=headers,
-            json={"inputs": prompt, "parameters": {"max_new_tokens": 150}},
+            HF_API_URL,
+            headers=headers,
+            json={
+                "inputs": prompt,
+                "parameters": {
+                    "max_new_tokens": 320,      # was 150
+                    "min_new_tokens": 120,      # encourage length
+                    "temperature": 0.3,
+                    "do_sample": True,
+                    "return_full_text": False,
+                }
+            },
             timeout=30,
         )
         if resp.status_code == 503:   # model warming up — silent fallback
@@ -634,7 +644,8 @@ def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) 
         return []
 
     chosen_filtered_idx = select_sentences_mmr(
-        retriever, question, filtered, k=2, min_rel=0.08, lambda_div=0.75, max_chars=320,
+        retriever, question, filtered,
+        k=4, min_rel=0.06, lambda_div=0.70, max_chars=900,
     )
 
     if not chosen_filtered_idx:
@@ -731,7 +742,8 @@ def select_pool_sentences_mmr(
 def extractive_answer_from_results(retriever: DocRetriever, question: str, results, k: int = 2):
     pool_sents, meta, chunks_sents = build_sentence_pool(results, max_chunks=3)
     chosen_pool_idx = select_pool_sentences_mmr(
-        retriever, question, pool_sents, k=k, min_rel=0.08, lambda_div=0.75, max_chars=320
+        retriever, question, pool_sents,
+        k=4, min_rel=0.06, lambda_div=0.70, max_chars=900,
     )
 
     if not chosen_pool_idx:
@@ -821,7 +833,7 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         extractive_text = " ".join(split_sentences(best_chunk)[:2]).strip()
     extractive_text = as_text(extractive_text)
 
-    context_pack = build_context_pack(retriever, reranked, max_chunks=4, max_chars=1800)
+    context_pack = build_context_pack(retriever, reranked, max_chunks=5, max_chars=2600)
     generated, is_generated = generate_answer_hf(question, context_pack)
 
     answer_text = generated if is_generated else extractive_text

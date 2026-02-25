@@ -1019,8 +1019,8 @@ def clean_raw_passage(text: str) -> str:
         # Remove leading label prefix if present (e.g., "common structure: ")
         p = _LABEL_PREFIX_RE.sub("", p)
 
-        # Remove embedded section titles anywhere
-        p = _EMBEDDED_SECTION_TITLE_RE.sub("", p)
+        # Remove embedded section heading titles anywhere
+        p = _EMBEDDED_SECTION_HEADING_RE.sub("", p)
 
         # Normalize whitespace after removals
         p = normalize_ws(p)

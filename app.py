@@ -1,14 +1,24 @@
 import html
 import io
 import re
-from typing import List, Tuple
-
-
+import time
+from typing import List, Tuple, Optional, Dict
 
 import numpy as np
 import streamlit as st
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+# ── Cross-encoder (sentence-transformers) ─────────────────────────────────────
+try:
+    from sentence_transformers.cross_encoder import CrossEncoder
+    CROSS_ENCODER_SUPPORT = True
+except ImportError:
+    CROSS_ENCODER_SUPPORT = False
+
+# ── HuggingFace Inference API for generation ───────────────────────────────────
+HF_API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-large"
+HF_TOKEN = None  # set via st.secrets; works without token on free tier (rate limited)
 
 # ── Optional dependencies ──────────────────────────────────────────────────────
 try:
@@ -174,6 +184,26 @@ section[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85; }
 .match-medium { background: #fff3cd; color: #856404; }
 .match-low    { background: #f8d7da; color: #721c24; }
 
+/* ── Attribution ── */
+.attr-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin: -0.4rem clamp(20px, 10%, 80px) 0.75rem 0;
+    padding: 0 1.1rem;
+}
+.attr-pill {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    background: #ede8df;
+    border: 1px solid var(--border);
+    padding: 2px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.03em;
+}
+
 /* ── Empty state ── */
 .empty-state {
     text-align: center;
@@ -200,8 +230,6 @@ section[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85; }
 """, unsafe_allow_html=True)
 
 
-
-
 # ── Text utilities ─────────────────────────────────────────────────────────────
 _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
@@ -219,82 +247,55 @@ def as_text(x) -> str:
     if isinstance(x, str):
         return x
     if isinstance(x, list) or isinstance(x, tuple):
-        # join list elements into text
         return " ".join(str(i) for i in x if i is not None)
     return str(x)
 
 def normalize_ws(s: str) -> str:
     s = as_text(s)
-    # Collapse all whitespace to single spaces, trim.
     return re.sub(r"\s+", " ", s or "").strip()
 
 
 def dedup_paragraphs(text: str) -> str:
-    """
-    Remove duplicated paragraphs/lines that often appear in scraped HTML or
-    converted PDFs (templates, repeated headers, repeated blocks).
-
-    De-dup is exact after whitespace normalization (keeps first occurrence).
-    """
     if not text:
         return ""
-
     lines = [ln.strip() for ln in text.splitlines()]
-    paras = [ln for ln in lines if ln]  # treat each non-empty line as a paragraph unit
-
+    paras = [ln for ln in lines if ln]
     seen = set()
     out = []
-
     for p in paras:
         key = normalize_ws(p).lower()
         if not key:
             continue
-
-        # Keep short lines (likely headings or structural labels)
         if len(key) < 40:
             out.append(p)
             continue
-
         if key in seen:
             continue
-
         seen.add(key)
         out.append(p)
-
     return "\n".join(out).strip()
 
 
 def chunk_text(text: str, chunk_size: int = 150, overlap: int = 40) -> List[str]:
-    """
-    Split on paragraph boundaries first, then enforce a max chunk size (in words),
-    using overlap to preserve local context.
-    """
     paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
     chunks: List[str] = []
     current_words: List[str] = []
 
     for para in paragraphs:
         para_words = para.split()
-
-        # If adding this paragraph would exceed chunk_size, flush current buffer
         if current_words and len(current_words) + len(para_words) > chunk_size:
             chunk = " ".join(current_words)
-            if len(current_words) >= 10:  # min 10 words to be useful
+            if len(current_words) >= 10:
                 chunks.append(chunk)
-
-            # Keep overlap words for continuity
             current_words = current_words[-overlap:] + para_words
         else:
             current_words.extend(para_words)
-
-        # Force flush if buffer is huge
         while len(current_words) > chunk_size * 1.5:
             chunk = " ".join(current_words[:chunk_size])
             if len(chunk.strip()) >= 10:
                 chunks.append(chunk)
-            current_words = current_words[chunk_size - overlap :]
+            current_words = current_words[chunk_size - overlap:]
 
-    # Flush remainder
     if len(current_words) >= 10:
         chunks.append(" ".join(current_words))
 
@@ -302,7 +303,6 @@ def chunk_text(text: str, chunk_size: int = 150, overlap: int = 40) -> List[str]
 
 
 def match_label(score: float) -> Tuple[str, str]:
-    """Return (label, css_class) for a cosine similarity score."""
     if score >= 0.25:
         return "strong match", "match-high"
     if score >= 0.08:
@@ -314,81 +314,99 @@ def split_sentences(text: str) -> List[str]:
     text = normalize_ws(text)
     if not text:
         return []
-    # Basic sentence splitting; good enough for an extractive baseline.
     sents = [s.strip() for s in _SENT_SPLIT_RE.split(text) if s.strip()]
     return sents
 
 
 # ── Source loaders ─────────────────────────────────────────────────────────────
-def load_pdf(file_bytes: bytes) -> Tuple[str, str]:
-    """Returns (text, error)."""
+def load_pdf(file_bytes: bytes) -> Tuple[str, dict, dict, str]:
     if not PDF_SUPPORT:
-        return "", "pdfplumber not installed. Add it to requirements.txt."
-
+        return "", {}, {}, "pdfplumber not installed. Add it to requirements.txt."
     try:
+        pages_text, section_map, page_map = [], {}, {}
+        para_idx = 0
+        _hre = re.compile(r"^(?:\d+[\d\.]*\s+)?[A-Z][^\n]{0,80}$")
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            pages = [p.extract_text() or "" for p in pdf.pages]
-        text = "\n\n".join(pages).strip()
+            for page_num, page in enumerate(pdf.pages, start=1):
+                raw = page.extract_text() or ""
+                page_map[para_idx] = page_num
+                for line in raw.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if _hre.match(line) and not line.endswith(".") and len(line) < 80:
+                        section_map[para_idx] = line
+                    para_idx += 1
+                pages_text.append(raw)
+        text = "\n\n".join(pages_text).strip()
         if not text:
-            return "", "PDF parsed but no text found. It may be a scanned/image-only PDF."
-        return text, ""
+            return "", {}, {}, "PDF parsed but no text found. It may be a scanned/image-only PDF."
+        return text, section_map, page_map, ""
     except Exception as e:
-        return "", f"PDF parse error: {e}"
+        return "", {}, {}, f"PDF parse error: {e}"
 
 
-def load_url(url: str) -> Tuple[str, str]:
-    """Returns (text, error)."""
+def load_url(url: str) -> Tuple[str, dict, str]:
     if not URL_SUPPORT:
-        return "", "requests/beautifulsoup4 not installed."
-
+        return "", {}, "requests/beautifulsoup4 not installed."
     url = normalize_url(url)
     if not url:
-        return "", "Please enter a URL."
-
+        return "", {}, "Please enter a URL."
     try:
-        resp = requests.get(
-            url,
-            timeout=15,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-            },
-        )
+        resp = requests.get(url, timeout=15, headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        })
         resp.raise_for_status()
-
         soup = BeautifulSoup(resp.text, "html.parser")
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
-            tag.decompose()
 
-        text = soup.get_text(separator="\n", strip=True).strip()
+        # Extract heading structure BEFORE stripping tags
+        section_map = {}  # paragraph_index -> heading
+        current_heading = ""
+        para_idx = 0
+        structured_lines = []
+        for tag in soup.find_all(["h1","h2","h3","h4","h5","p","li","pre","code","blockquote"]):
+            if tag.name in ("h1","h2","h3","h4","h5"):
+                current_heading = tag.get_text(strip=True)
+            else:
+                line = tag.get_text(separator=" ", strip=True)
+                if line:
+                    section_map[para_idx] = current_heading
+                    structured_lines.append(line)
+                    para_idx += 1
+
+        text = "\n".join(structured_lines).strip()
+
         if len(text) < 100:
-            return "", (
+            return "", {}, (
                 "Page fetched but no usable text extracted. "
                 "The site may require JavaScript. "
-                "Copy the page text and use Paste Text instead."
+                "Try copying the text and using Paste Text instead."
             )
-
-        return text, ""
-
+        return text, section_map, ""
     except requests.exceptions.Timeout:
-        return "", "Request timed out (15s). Try Paste Text instead."
+        return "", {}, "Request timed out (15s). Try Paste Text instead."
     except requests.exceptions.ConnectionError:
-        return "", "Could not connect. Check the URL and try again."
+        return "", {}, "Could not connect. Check the URL and try again."
     except requests.exceptions.HTTPError as e:
-        return "", f"HTTP {e.response.status_code}: page may require login or does not exist."
+        return "", {}, f"HTTP {e.response.status_code}: page may require login or does not exist."
     except Exception as e:
-        return "", f"Unexpected fetch error: {e}"
+        return "", {}, f"Unexpected fetch error: {e}"
 
 
 # ── Retriever ──────────────────────────────────────────────────────────────────
 class DocRetriever:
-    def __init__(self, chunks: List[str]):
+    def __init__(self, chunks: List[str],
+                 chunk_sections: Optional[List[str]] = None,
+                 chunk_pages: Optional[List[Optional[int]]] = None):
         self.chunks = chunks
+        self.chunk_sections = chunk_sections or [""] * len(chunks)
+        self.chunk_pages    = chunk_pages    or [None] * len(chunks)
         self.vectorizer = TfidfVectorizer(
             ngram_range=(1, 2),
             max_features=30000,
@@ -397,43 +415,130 @@ class DocRetriever:
         )
         self.matrix = self.vectorizer.fit_transform(chunks)
 
-    def query(self, question: str, top_k: int = 3) -> List[Tuple[str, float]]:
+    def query(self, question: str, top_k: int = 20) -> List[Tuple[str, float, int]]:
+        """Returns (chunk_text, tfidf_score, chunk_index) — larger pool for reranker."""
         q_vec = self.vectorizer.transform([question])
         scores = cosine_similarity(q_vec, self.matrix).flatten()
         top_idx = np.argsort(scores)[::-1][:top_k]
-
-        # No hard threshold: always return top_k and label match quality.
-        return [(self.chunks[i], float(scores[i])) for i in top_idx]
+        return [(self.chunks[i], float(scores[i]), int(i)) for i in top_idx]
 
     def score_sentences(self, question: str, sentences: List[str]) -> List[float]:
         if not sentences:
             return []
         q_vec = self.vectorizer.transform([question])
         s_mat = self.vectorizer.transform(sentences)
-        s_scores = cosine_similarity(q_vec, s_mat).flatten()
-        return [float(x) for x in s_scores]
+        return [float(x) for x in cosine_similarity(q_vec, s_mat).flatten()]
+
+    def get_attribution(self, chunk_idx: int) -> str:
+        parts = []
+        section = self.chunk_sections[chunk_idx] if chunk_idx < len(self.chunk_sections) else ""
+        page    = self.chunk_pages[chunk_idx]    if chunk_idx < len(self.chunk_pages)    else None
+        if section:
+            parts.append(f"§ {section}")
+        if page is not None:
+            parts.append(f"p. {page}")
+        return "  ·  ".join(parts)
 
 
-def build_knowledge_base(text: str, source_name: str) -> str:
-    """
-    1) De-dup paragraphs (fix repeated blocks)
-    2) Chunk
-    3) Fit TF-IDF retriever and store in session state
-    """
+def build_knowledge_base(text: str, source_name: str,
+                         section_map: Optional[Dict[int, str]] = None,
+                         page_map: Optional[Dict[int, int]] = None) -> str:
     cleaned = dedup_paragraphs(text)
-    chunks = chunk_text(cleaned)
-
-    if len(chunks) < 2:
+    raw_chunks = chunk_text(cleaned)
+    if len(raw_chunks) < 2:
         return "Not enough text to index. Try a longer document."
 
+    # Resolve nearest-preceding section/page for every chunk
+    def resolve(m, i):
+        if not m:
+            return None
+        val = None
+        for k in sorted(m.keys()):
+            if k <= i:
+                val = m[k]
+        return val
+
+    chunk_sections = [resolve(section_map, i) or "" for i in range(len(raw_chunks))]
+    chunk_pages    = [resolve(page_map,    i)     for i in range(len(raw_chunks))]
+
     try:
-        st.session_state.retriever = DocRetriever(chunks)
+        st.session_state.retriever = DocRetriever(raw_chunks, chunk_sections, chunk_pages)
         st.session_state.source_name = source_name
-        st.session_state.chunk_count = len(chunks)
+        st.session_state.chunk_count = len(raw_chunks)
         st.session_state.messages = []
         return ""
     except Exception as e:
         return f"Indexing error: {e}"
+
+
+# ── Cross-encoder reranking ────────────────────────────────────────────────────
+
+@st.cache_resource(show_spinner="Loading reranker (first run only)...")
+def load_cross_encoder():
+    if not CROSS_ENCODER_SUPPORT:
+        return None
+    try:
+        return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    except Exception:
+        return None
+
+
+def rerank(question: str, candidates: List[Tuple[str, float, int]], top_k: int = 5) -> List[Tuple[str, float, int]]:
+    """Cross-encoder rerank. Falls back to TF-IDF order if unavailable."""
+    ce = load_cross_encoder()
+    if ce is None or not candidates:
+        return candidates[:top_k]
+    pairs = [(question, c[0]) for c in candidates]
+    try:
+        scores = ce.predict(pairs)
+        ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
+        return [c for _, c in ranked[:top_k]]
+    except Exception:
+        return candidates[:top_k]
+
+
+# ── HuggingFace flan-t5 generation ────────────────────────────────────────────
+
+def generate_answer_hf(question: str, context: str) -> Tuple[str, bool]:
+    """Returns (answer, is_generated). Falls back silently on cold start/error."""
+    if not URL_SUPPORT:
+        return "", False
+    prompt = (
+        f"Answer the question using only the context below. Be concise.\n\n"
+        f"Context: {context[:1200]}\n\nQuestion: {question}\n\nAnswer:"
+    )
+    headers = {"Content-Type": "application/json"}
+    if HF_TOKEN:
+        headers["Authorization"] = f"Bearer {HF_TOKEN}"
+    try:
+        resp = requests.post(
+            HF_API_URL, headers=headers,
+            json={"inputs": prompt, "parameters": {"max_new_tokens": 150}},
+            timeout=30,
+        )
+        if resp.status_code == 503:   # model warming up — silent fallback
+            return "", False
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list) and data and "generated_text" in data[0]:
+            answer = data[0]["generated_text"].strip()
+            if "Answer:" in answer:
+                answer = answer.split("Answer:")[-1].strip()
+            if answer and len(answer) > 5:
+                return answer, True
+        return "", False
+    except Exception:
+        return "", False
+
+
+# ── Streaming word generator ───────────────────────────────────────────────────
+
+def stream_words(text: str, delay: float = 0.02):
+    """Word-by-word generator for st.write_stream. Swap body for LLM token stream later."""
+    words = text.split()
+    for i, word in enumerate(words):
+        yield word + ("" if i == len(words) - 1 else " ")
+        time.sleep(delay)
 
 _LATEX_BLOCK_RE = re.compile(r"^\s*\\\[[\s\S]*\\\]\s*$")
 
@@ -441,10 +546,8 @@ def is_noise_sentence(s: str) -> bool:
     s_norm = normalize_ws(s)
     if not s_norm:
         return True
-    # Drop pure LaTeX display blocks
     if _LATEX_BLOCK_RE.match(s_norm):
         return True
-    # Drop very short structural fragments
     if len(s_norm) < 35:
         return True
     return False
@@ -466,23 +569,15 @@ def select_sentences_mmr(
     lambda_div: float = 0.75,
     max_chars: int = 320,
 ) -> List[int]:
-    """
-    Maximal Marginal Relevance selection over sentences.
-
-    - maximizes relevance to question
-    - penalizes redundancy w.r.t already selected sentences
-    - returns sentence indices (in original order)
-    """
     if not sentences:
         return []
 
     q_vec = retriever.vectorizer.transform([question])
     s_mat = retriever.vectorizer.transform(sentences)
 
-    rel = cosine_similarity(q_vec, s_mat).flatten()  # relevance to question
-    sim = cosine_similarity(s_mat, s_mat)            # sentence-to-sentence similarity
+    rel = cosine_similarity(q_vec, s_mat).flatten()
+    sim = cosine_similarity(s_mat, s_mat)
 
-    # Candidate pool: only sentences above relevance threshold
     candidates = [i for i, r in enumerate(rel) if r >= min_rel]
     if not candidates:
         return []
@@ -495,13 +590,10 @@ def select_sentences_mmr(
         best_score = -1e9
 
         for i in candidates:
-            # redundancy: max similarity to anything already selected
             red = 0.0
             if selected:
                 red = float(np.max(sim[i, selected]))
-
             mmr = lambda_div * float(rel[i]) - (1.0 - lambda_div) * red
-
             if mmr > best_score:
                 best_score = mmr
                 best_i = i
@@ -509,7 +601,6 @@ def select_sentences_mmr(
         if best_i is None:
             break
 
-        # enforce char budget
         sent_len = len(sentences[best_i])
         if selected and (total_chars + 1 + sent_len) > max_chars:
             break
@@ -525,39 +616,27 @@ def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) 
     if not sents:
         return []
 
-    # filter noise first
     filtered = []
-    idx_map = []
-    for i, s in enumerate(sents):
+    for s in sents:
         if is_noise_sentence(s):
             continue
         s2 = strip_leading_display_latex(s)
         if not s2:
             continue
         filtered.append(s2)
-        idx_map.append(i)
 
     if not filtered:
         return []
 
-    # select diverse, relevant sentences
     chosen_filtered_idx = select_sentences_mmr(
-        retriever,
-        question,
-        filtered,
-        k=2,              # keep answer tight
-        min_rel=0.08,     # tune globally
-        lambda_div=0.75,  # more relevance than diversity
-        max_chars=320,
+        retriever, question, filtered, k=2, min_rel=0.08, lambda_div=0.75, max_chars=320,
     )
 
     if not chosen_filtered_idx:
-        # fallback: first filtered sentence (already stripped)
         return [filtered[0]]
 
     picked = [filtered[j] for j in chosen_filtered_idx]
-    picked = [x for x in picked if x]
-    return picked
+    return [x for x in picked if x]
 
 
 _LATEX_DISPLAY_ANYWHERE_RE = re.compile(r"\\\[[\s\S]*?\\\]")
@@ -565,91 +644,20 @@ _LATEX_DISPLAY_ANYWHERE_RE = re.compile(r"\\\[[\s\S]*?\\\]")
 def remove_display_latex_anywhere(s: str) -> str:
     if not s:
         return ""
-    # Remove all display-math blocks like \[ ... \]
     s = _LATEX_DISPLAY_ANYWHERE_RE.sub("", s)
-    # Clean up extra whitespace created by removals
     return normalize_ws(s)
-
-def _focused_supporting_passage(
-    retriever: DocRetriever, question: str, best_chunk: str, answer_sents: List[str]
-) -> str:
-    """
-    Change #3: Answer-focused passage.
-    Build a short 'supporting passage' from the best chunk that covers the answer,
-    instead of dumping the entire chunk.
-
-    Heuristic:
-    - If we have answer sentences, include them plus up to 2 adjacent sentences each.
-    - Else include top 4 scored sentences (in order).
-    """
-    sents = split_sentences(best_chunk)
-    if not sents:
-        return best_chunk
-
-    if answer_sents:
-        # Map answer sentences back to indices (best effort via substring match)
-        idxs = set()
-        for a in answer_sents:
-            a_norm = normalize_ws(a)
-            for i, s in enumerate(sents):
-                if a_norm and a_norm in normalize_ws(s):
-                    idxs.add(i)
-                    break 
-
-        # Expand window around each found index
-        keep = set()
-        for i in idxs:
-            for j in range(max(0, i - 1), min(len(sents), i + 2)):
-                keep.add(j)
-
-        if keep:
-            out = " ".join(sents[i] for i in sorted(keep)).strip()
-            out = strip_leading_display_latex(out)
-            out = remove_display_latex_anywhere(out)
-            return out
-
-    # fallback: top scored sentences
-    scores = retriever.score_sentences(question, sents)
-    ranked = np.argsort(np.array(scores))[::-1]
-    pick = []
-    for idx in ranked:
-        if scores[idx] < 0.03:
-            continue
-        pick.append(int(idx))
-        if len(pick) >= 4:
-            break
-    if not pick:
-        text = " ".join(sents[:4]).strip()
-        out = strip_leading_display_latex(text)
-        out = remove_display_latex_anywhere(out)
-        return out
-
-    pick_sorted = sorted(set(pick))
-    out = " ".join(sents[i] for i in pick_sorted).strip()
-    out = strip_leading_display_latex(out)
-    out = remove_display_latex_anywhere(out)
-    return out
 
 
 def build_sentence_pool(results, max_chunks: int = 3):
-    """
-    results: [(chunk, score), ...]
-    returns:
-      pool_sents: list[str]
-      meta: list[(chunk_index, sent_index_in_chunk)]
-      chunks_sents: list[list[str]]  # sentence lists per chunk
-    """
     chunks_sents = []
     pool_sents = []
     meta = []
-
     for ci, (chunk, _) in enumerate(results[:max_chunks]):
         sents = split_sentences(chunk)
         chunks_sents.append(sents)
         for si, s in enumerate(sents):
             pool_sents.append(s)
             meta.append((ci, si))
-
     return pool_sents, meta, chunks_sents
 
 def select_pool_sentences_mmr(
@@ -661,7 +669,6 @@ def select_pool_sentences_mmr(
     lambda_div: float = 0.75,
     max_chars: int = 320,
 ) -> List[int]:
-    # Clean and filter noise first but keep mapping
     cleaned = []
     idx_map = []
 
@@ -714,18 +721,15 @@ def select_pool_sentences_mmr(
         total_chars += sent_len + 1
         candidates.remove(best_i)
 
-    # Map back to original pool indices
-    pool_selected = [idx_map[i] for i in sorted(set(selected))]
-    return pool_selected
+    return [idx_map[i] for i in sorted(set(selected))]
 
 def extractive_answer_from_results(retriever: DocRetriever, question: str, results, k: int = 2):
-    pool_sents, meta, _chunks_sents = build_sentence_pool(results, max_chunks=3)
+    pool_sents, meta, chunks_sents = build_sentence_pool(results, max_chunks=3)
     chosen_pool_idx = select_pool_sentences_mmr(
         retriever, question, pool_sents, k=k, min_rel=0.08, lambda_div=0.75, max_chars=320
     )
 
     if not chosen_pool_idx:
-        # fallback: first non-noise sentence from best chunk
         best_chunk = results[0][0]
         for s in split_sentences(best_chunk):
             if not is_noise_sentence(s):
@@ -736,13 +740,11 @@ def extractive_answer_from_results(retriever: DocRetriever, question: str, resul
     picked = [strip_leading_display_latex(pool_sents[i]) for i in chosen_pool_idx]
     picked = [x for x in picked if x]
 
-    # Figure out which chunk to use for supporting passage
     chunk_votes = {}
     for i in chosen_pool_idx:
         ci, si = meta[i]
         chunk_votes.setdefault(ci, []).append(si)
 
-    # choose chunk with most selected sentences
     best_ci = max(chunk_votes.items(), key=lambda kv: len(kv[1]))[0]
     return picked, (best_ci, chunk_votes[best_ci])
 
@@ -764,74 +766,76 @@ def focused_supporting_from_indices(results, chunks_sents, chosen_chunk_index: i
 
 
 def answer_question(retriever: DocRetriever, question: str) -> tuple:
-    """Returns (answer_html, raw_score, extras)."""
-    results = retriever.query(question, top_k=3)
+    """
+    Pipeline: TF-IDF (top-20) -> cross-encoder rerank (top-5)
+              -> MMR extraction -> HF generation (falls back to extractive)
+              -> section attribution
+    Returns: (answer_html, answer_text, score, extras, attribution_html)
+    """
+    # Step 1+2: retrieve and rerank
+    candidates = retriever.query(question, top_k=20)
+    reranked   = rerank(question, candidates, top_k=5)
 
-    if not results or results[0][1] < 0.01:
-        return (
-            "Nothing relevant found. Try rephrasing using specific keywords from the document.",
-            0.0,
-            [],
-        )
+    if not reranked or reranked[0][1] < 0.01:
+        empty = "Nothing relevant found. Try rephrasing using keywords from the document."
+        return f'<p>{empty}</p>', empty, 0.0, [], ""
 
-    best_chunk, best_score = results[0]
+    best_chunk, best_score, best_idx = reranked[0]
     label, css_class = match_label(best_score)
 
-    # --- Answer (pooled over top chunks) ---
-    pool_sents, meta, chunks_sents = build_sentence_pool(results, max_chunks=3)
-
-    answer_sents, (support_chunk_idx, support_sent_idxs) = extractive_answer_from_results(
-        retriever, question, results, k=2
+    # Step 3: MMR extractive answer (drop chunk_idx for downstream helpers)
+    results_for_mmr = [(c, s) for c, s, _ in reranked]
+    pool_sents, meta, chunks_sents = build_sentence_pool(results_for_mmr, max_chunks=3)
+    answer_sents, (sup_ci, sup_si) = extractive_answer_from_results(
+        retriever, question, results_for_mmr, k=2
     )
-    answer_text = " ".join(answer_sents).strip()
+    extractive_text = " ".join(answer_sents).strip()
+    if not extractive_text:
+        extractive_text = " ".join(split_sentences(best_chunk)[:2]).strip()
+    if isinstance(extractive_text, (list, tuple)):
+        extractive_text = " ".join(map(str, extractive_text))
 
-    # safe fallback if extraction returns nothing
-    if not answer_text:
-        fallback = split_sentences(best_chunk)[:2]
-        answer_text = " ".join(fallback).strip()
+    # Step 4: HF generation — falls back silently to extractive
+    generated, is_generated = generate_answer_hf(question, best_chunk)
+    answer_text  = generated if is_generated else extractive_text
+    source_label = "generated answer" if is_generated else "extracted passage"
 
-    # --- Supporting passage ---
+    # Supporting passage
     focused = ""
-    if support_sent_idxs is not None:
-        focused = focused_supporting_from_indices(
-            results, chunks_sents, support_chunk_idx, support_sent_idxs
-        )
-    else:
-        focused = _focused_supporting_passage(retriever, question, best_chunk, answer_sents)
-
-    # Ensure strings (avoid list bugs forever)
-    if isinstance(answer_text, (list, tuple)):
-        answer_text = " ".join(map(str, answer_text))
+    if sup_si is not None:
+        focused = focused_supporting_from_indices(results_for_mmr, chunks_sents, sup_ci, sup_si)
     if isinstance(focused, (list, tuple)):
         focused = " ".join(map(str, focused))
 
-    passages = []
-    passages.append(html.escape(f"Answer: {answer_text}"))
+    # Step 5: attribution
+    attr_text = retriever.get_attribution(best_idx)
+    attribution_html = ""
+    if attr_text:
+        attribution_html = (
+            f'<div class="attr-bar">'
+            f'<span class="attr-pill">{html.escape(attr_text)}</span>'
+            f'</div>'
+        )
 
+    # Build display HTML
+    passages = [html.escape(f"{source_label.capitalize()}: {answer_text}")]
     if focused and normalize_ws(focused) != normalize_ws(answer_text):
         passages.append(html.escape(f"Supporting passage: {focused}"))
-
-    # --- Extras for expander (raw passages) ---
-    extras = []
-    seen = set()
-    for chunk, score in results[1:]:
-        if score < 0.01:
-            continue
-        key = normalize_ws(chunk[:200]).lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        extras.append((chunk, score))
-
     answer_body = "</p><p>".join(passages)
     answer_html = (
-        f'<div class="msg-label">Most relevant passage(s)</div>'
+        f'<div class="msg-label">{source_label}</div>'
         f"<p>{answer_body}</p>"
         f'<span class="match-pill {css_class}">{label}</span>'
     )
 
-    return answer_html, best_score, extras
+    extras = []
+    seen = set()
+    for chunk, score, _ in reranked[1:]:
+        key = normalize_ws(chunk[:200]).lower()
+        if key not in seen and score >= 0.01:
+            seen.add(key); extras.append((chunk, score))
 
+    return answer_html, answer_text, best_score, extras, attribution_html
 
 
 # ── Session state init ─────────────────────────────────────────────────────────
@@ -841,7 +845,6 @@ for _key, _default in [
     ("chunk_count", 0),
     ("messages", []),
     ("source_type", "URL"),
-    # Store uploaded PDF bytes so they survive reruns
     ("pdf_bytes", None),
     ("pdf_name", ""),
 ]:
@@ -865,8 +868,6 @@ with st.sidebar:
 
     if source_type == "PDF Upload":
         uploaded = st.file_uploader("Upload PDF", type=["pdf"], label_visibility="collapsed")
-
-        # Capture bytes immediately — survives subsequent reruns
         if uploaded is not None:
             file_bytes = uploaded.read()
             if file_bytes:
@@ -875,16 +876,17 @@ with st.sidebar:
 
         if st.session_state.pdf_bytes and st.button("Build Knowledge Base", key="build_pdf"):
             with st.spinner("Reading PDF..."):
-                text, err = load_pdf(st.session_state.pdf_bytes)
+                text, section_map, page_map, err = load_pdf(st.session_state.pdf_bytes)
             if err:
                 st.error(err)
             else:
                 with st.spinner("Indexing..."):
-                    err = build_knowledge_base(text, st.session_state.pdf_name)
+                    err = build_knowledge_base(text, st.session_state.pdf_name,
+                                               section_map=section_map, page_map=page_map)
                 if err:
                     st.error(err)
                 else:
-                    st.session_state.pdf_bytes = None  # free memory
+                    st.session_state.pdf_bytes = None
                     st.rerun()
 
     if st.session_state.retriever:
@@ -905,15 +907,12 @@ with st.sidebar:
 st.markdown('<div class="doc-header">Papertrail</div>', unsafe_allow_html=True)
 st.markdown('<div class="doc-sub">Ask anything from your document</div>', unsafe_allow_html=True)
 
-# URL and Paste Text inputs live here (light background = no CSS fights with sidebar)
 if source_type == "URL":
     col1, col2 = st.columns([5, 1])
     with col1:
         url_val = st.text_input(
-            "URL",
-            placeholder="https://example.com/article",
-            label_visibility="collapsed",
-            key="url_input",
+            "URL", placeholder="https://example.com/article",
+            label_visibility="collapsed", key="url_input",
         )
     with col2:
         fetch_clicked = st.button("Fetch", use_container_width=True)
@@ -923,13 +922,13 @@ if source_type == "URL":
             st.warning("Enter a URL first.")
         else:
             with st.spinner("Fetching..."):
-                text, err = load_url(url_val)
+                text, section_map, err = load_url(url_val)
             if err:
                 st.error(err)
                 st.info("Tip: copy the page text and use Paste Text instead.")
             else:
                 with st.spinner("Indexing..."):
-                    err = build_knowledge_base(text, url_val.strip())
+                    err = build_knowledge_base(text, url_val.strip(), section_map=section_map)
                 if err:
                     st.error(err)
                 else:
@@ -937,11 +936,9 @@ if source_type == "URL":
 
 elif source_type == "Paste Text":
     pasted = st.text_area(
-        "Paste text",
-        height=200,
+        "Paste text", height=200,
         placeholder="Paste any text here -- articles, docs, notes...",
-        label_visibility="collapsed",
-        key="paste_input",
+        label_visibility="collapsed", key="paste_input",
     )
     if st.button("Build Knowledge Base", key="build_paste"):
         if not pasted.strip():
@@ -954,7 +951,6 @@ elif source_type == "Paste Text":
             else:
                 st.rerun()
 
-# Source badge — only shown when a KB is active
 if st.session_state.retriever and st.session_state.source_name:
     src = html.escape(str(st.session_state.source_name))
     st.markdown(
@@ -965,12 +961,9 @@ if st.session_state.retriever and st.session_state.source_name:
         unsafe_allow_html=True,
     )
 
-# Empty states
 if not st.session_state.retriever:
-    if source_type == "PDF Upload":
-        msg = "Upload a PDF from the sidebar to begin."
-    else:
-        msg = "Load a document above to begin."
+    msg = "Upload a PDF from the sidebar to begin." if source_type == "PDF Upload" \
+        else "Load a document above to begin."
     st.markdown(f'<div class="empty-state">{msg}</div>', unsafe_allow_html=True)
 elif not st.session_state.messages:
     st.markdown(
@@ -978,91 +971,58 @@ elif not st.session_state.messages:
         unsafe_allow_html=True,
     )
 
-
-# Display math blocks like \[ ... \]
-_LATEX_DISPLAY_RE = re.compile(r"\\\[[\s\S]*?\\\]")
-
-# Label prefixes like "common structure:" or "Key idea:" at start of a line/paragraph
-_LABEL_PREFIX_RE = re.compile(r"^\s*[A-Za-z][A-Za-z\s\-]{0,40}:\s+")
-
-# Embedded numbered section headers like "8.9 Heuristic Search" anywhere in text
-# Matches: 1.2 Title, 8.9 Heuristic Search, 10.3.1 Something
-# Matches section numbers like 8.9 or 10.3.1, then removes the following heading phrase
-# up to a boundary (newline, double space, sentence end, colon).
-_EMBEDDED_SECTION_HEADING_RE = re.compile(
-    r"""
-    \b
-    \d+(?:\.\d+)+          # section number like 8.9 or 10.3.1
-    \s+                    # whitespace
-    (?:[^\n]*[A-Za-z][^\n]*){1,80}?          # up to 80 chars of heading text (non-newline), non-greedy
-    (?=                    # stop before boundary:
-        \n                 # newline
-      | \s{2,}              # double space
-      | \s*[:\-–—]\s        # colon/dash separators
-      | \.(?:\s|$)          # sentence end
-      | $                   # end of string
-    )
-    """,
-    re.VERBOSE,
-)
-
-def clean_raw_passage(text: str) -> str:
-    if not text:
-        return ""
-
-    # Remove display math blocks
-    text = _LATEX_DISPLAY_RE.sub("", text)
-
-    # Process paragraph by paragraph to remove label prefixes reliably
-    paras = [p.strip() for p in text.split("\n") if p.strip()]
-    out_paras = []
-
-    for p in paras:
-        # Remove leading label prefix if present (e.g., "common structure: ")
-        p = _LABEL_PREFIX_RE.sub("", p)
-
-        # Remove embedded section heading titles anywhere
-        p = _EMBEDDED_SECTION_HEADING_RE.sub("", p)
-
-        # Normalize whitespace after removals
-        p = normalize_ws(p)
-
-        if p:
-            out_paras.append(p)
-
-    return "\n\n".join(out_paras).strip()
-
-# Chat history
+# ── Chat history ──────────────────────────────────────────────────────────────
 for msg in st.session_state.messages:
     if msg["role"] == "user":
-        safe_content = html.escape(msg["content"])
-        st.markdown(f'<div class="msg-user">{safe_content}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="msg-user">{html.escape(msg["content"])}</div>', unsafe_allow_html=True)
     else:
-        # Bot messages contain pre-built HTML (already escaped where needed)
         st.markdown(f'<div class="msg-bot">{msg["content"]}</div>', unsafe_allow_html=True)
+        if msg.get("attribution_html"):
+            st.markdown(msg["attribution_html"], unsafe_allow_html=True)
         extras = msg.get("extras", [])
         if extras:
-            with st.expander("Show raw passages"):
+            with st.expander("Show supporting passages"):
                 for chunk, score in extras:
-                    cleaned = clean_raw_passage(chunk)
-                    st.write(cleaned)
+                    st.caption(f"score: {score:.3f}")
+                    st.write(chunk)
 
-# Question input — st.form fires only on explicit submit and clears after
+# ── Live input + streaming ─────────────────────────────────────────────────────
 if st.session_state.retriever:
-    with st.form(key="question_form", clear_on_submit=True):
-        col1, col2 = st.columns([6, 1])
-        with col1:
-            question = st.text_input(
-                "Question",
-                placeholder="What does the document say about...?",
-                label_visibility="collapsed",
-            )
-        with col2:
-            submitted = st.form_submit_button("Ask", use_container_width=True)
+    question = st.chat_input("Ask a question about your document...")
 
-    if submitted and question.strip():
+    if question and question.strip():
         q = question.strip()
-        answer_html, score, extras = answer_question(st.session_state.retriever, q)
+
+        # Show user bubble immediately
+        st.markdown(f'<div class="msg-user">{html.escape(q)}</div>', unsafe_allow_html=True)
+
+        with st.spinner("Thinking..."):
+            answer_html, answer_text, score, extras, attribution_html = answer_question(
+                st.session_state.retriever, q
+            )
+
+        # Stream the plain-text answer word by word into a bot bubble
+        st.markdown('<div class="msg-bot">', unsafe_allow_html=True)
+        st.write_stream(stream_words(answer_text))
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # Attribution bar
+        if attribution_html:
+            st.markdown(attribution_html, unsafe_allow_html=True)
+
+        # Supporting passages
+        if extras:
+            with st.expander("Show supporting passages"):
+                for chunk, s in extras:
+                    st.caption(f"score: {s:.3f}")
+                    st.write(chunk)
+
+        # Persist
         st.session_state.messages.append({"role": "user", "content": q})
-        st.session_state.messages.append({"role": "assistant", "content": answer_html, "extras": extras})
-        st.rerun()
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": answer_html,
+            "extras": extras,
+            "attribution_html": attribution_html,
+            "answer_text": answer_text,
+        })

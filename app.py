@@ -365,22 +365,26 @@ def load_url(url: str) -> Tuple[str, dict, str]:
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Extract heading structure BEFORE stripping tags
-        section_map = {}  # paragraph_index -> heading
+        # Step 1: capture heading positions BEFORE stripping anything
+        section_map = {}
         current_heading = ""
         para_idx = 0
-        structured_lines = []
-        for tag in soup.find_all(["h1","h2","h3","h4","h5","p","li","pre","code","blockquote"]):
-            if tag.name in ("h1","h2","h3","h4","h5"):
+        for tag in soup.find_all(True):
+            if tag.name in ("h1", "h2", "h3", "h4", "h5", "h6"):
                 current_heading = tag.get_text(strip=True)
-            else:
-                line = tag.get_text(separator=" ", strip=True)
-                if line:
-                    section_map[para_idx] = current_heading
-                    structured_lines.append(line)
+            elif tag.name in ("p", "li", "td", "div", "blockquote", "pre"):
+                # only leaf-ish nodes (skip containers whose children we will also visit)
+                if not tag.find(["p", "li", "td", "div", "blockquote"]):
+                    if current_heading:
+                        section_map[para_idx] = current_heading
                     para_idx += 1
 
-        text = "\n".join(structured_lines).strip()
+        # Step 2: strip noise, then get_text on whatever remains
+        for tag in soup(["script", "style", "nav", "footer", "header",
+                         "aside", "noscript", "form", "button", "iframe"]):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n", strip=True).strip()
 
         if len(text) < 100:
             return "", {}, (

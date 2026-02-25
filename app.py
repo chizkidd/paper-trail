@@ -620,9 +620,154 @@ def _focused_supporting_passage(
     return out
 
 
+def build_sentence_pool(results, max_chunks: int = 3):
+    """
+    results: [(chunk, score), ...]
+    returns:
+      pool_sents: list[str]
+      meta: list[(chunk_index, sent_index_in_chunk)]
+      chunks_sents: list[list[str]]  # sentence lists per chunk
+    """
+    chunks_sents = []
+    pool_sents = []
+    meta = []
+
+    for ci, (chunk, _) in enumerate(results[:max_chunks]):
+        sents = split_sentences(chunk)
+        chunks_sents.append(sents)
+        for si, s in enumerate(sents):
+            pool_sents.append(s)
+            meta.append((ci, si))
+
+    return pool_sents, meta, chunks_sents
+
+def select_pool_sentences_mmr(
+    retriever: DocRetriever,
+    question: str,
+    pool_sents: List[str],
+    k: int = 2,
+    min_rel: float = 0.08,
+    lambda_div: float = 0.75,
+    max_chars: int = 320,
+) -> List[int]:
+    # Clean and filter noise first but keep mapping
+    cleaned = []
+    idx_map = []
+
+    for i, s in enumerate(pool_sents):
+        if is_noise_sentence(s):
+            continue
+        s2 = strip_leading_display_latex(s)
+        if not s2:
+            continue
+        cleaned.append(s2)
+        idx_map.append(i)
+
+    if not cleaned:
+        return []
+
+    q_vec = retriever.vectorizer.transform([question])
+    s_mat = retriever.vectorizer.transform(cleaned)
+
+    rel = cosine_similarity(q_vec, s_mat).flatten()
+    sim = cosine_similarity(s_mat, s_mat)
+
+    candidates = [i for i, r in enumerate(rel) if r >= min_rel]
+    if not candidates:
+        return []
+
+    selected = []
+    total_chars = 0
+
+    while candidates and len(selected) < k and total_chars < max_chars:
+        best_i = None
+        best_score = -1e9
+
+        for i in candidates:
+            red = 0.0
+            if selected:
+                red = float(np.max(sim[i, selected]))
+            mmr = lambda_div * float(rel[i]) - (1.0 - lambda_div) * red
+            if mmr > best_score:
+                best_score = mmr
+                best_i = i
+
+        if best_i is None:
+            break
+
+        sent_len = len(cleaned[best_i])
+        if selected and (total_chars + 1 + sent_len) > max_chars:
+            break
+
+        selected.append(best_i)
+        total_chars += sent_len + 1
+        candidates.remove(best_i)
+
+    # Map back to original pool indices
+    pool_selected = [idx_map[i] for i in sorted(set(selected))]
+    return pool_selected
+
+def extractive_answer_from_results(retriever: DocRetriever, question: str, results, k: int = 2):
+    pool_sents, meta, _chunks_sents = build_sentence_pool(results, max_chunks=3)
+    chosen_pool_idx = select_pool_sentences_mmr(
+        retriever, question, pool_sents, k=k, min_rel=0.08, lambda_div=0.75, max_chars=320
+    )
+
+    if not chosen_pool_idx:
+        # fallback: first non-noise sentence from best chunk
+        best_chunk = results[0][0]
+        for s in split_sentences(best_chunk):
+            if not is_noise_sentence(s):
+                s2 = strip_leading_display_latex(s)
+                return [s2] if s2 else [], (0, None)
+        return [], (0, None)
+
+    picked = [strip_leading_display_latex(pool_sents[i]) for i in chosen_pool_idx]
+    picked = [x for x in picked if x]
+
+    # Figure out which chunk to use for supporting passage
+    chunk_votes = {}
+    for i in chosen_pool_idx:
+        ci, si = meta[i]
+        chunk_votes.setdefault(ci, []).append(si)
+
+    # choose chunk with most selected sentences
+    best_ci = max(chunk_votes.items(), key=lambda kv: len(kv[1]))[0]
+    return picked, (best_ci, chunk_votes[best_ci])
+
+
+def focused_supporting_from_indices(results, chunks_sents, chosen_chunk_index: int, chosen_sent_indices: List[int]):
+    sents = chunks_sents[chosen_chunk_index]
+    if not sents:
+        return ""
+
+    keep = set()
+    for i in chosen_sent_indices:
+        for j in range(max(0, i - 1), min(len(sents), i + 2)):
+            keep.add(j)
+
+    out = " ".join(sents[i] for i in sorted(keep)).strip()
+    out = strip_leading_display_latex(out)
+    out = remove_display_latex_anywhere(out)
+    return out
+
+
 def answer_question(retriever: DocRetriever, question: str) -> tuple:
     """Returns (answer_html, raw_score)."""
     results = retriever.query(question)
+
+    pool_sents, meta, chunks_sents = build_sentence_pool(results, max_chunks=3)
+
+    answer_sents, (support_chunk_idx, support_sent_idxs) = extractive_answer_from_results(
+        retriever, question, results, k=2
+    )
+    answer_text = " ".join(answer_sents).strip()
+
+    focused = ""
+    if support_sent_idxs is not None:
+        focused = focused_supporting_from_indices(results, chunks_sents, support_chunk_idx, support_sent_idxs)
+    else:
+        focused = _focused_supporting_passage(retriever, question, results[0][0], answer_sents)
 
     if not results or results[0][1] < 0.01:
         return (

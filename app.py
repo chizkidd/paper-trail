@@ -323,14 +323,43 @@ with st.sidebar:
             source_label = uploaded.name
 
     elif source_type == "URL":
-        url_input = st.text_input("Enter URL", placeholder="https://example.com/docs")
+        st.markdown("""
+        <style>
+        .custom-input input, .custom-textarea textarea {
+            background: rgba(255,255,255,0.07) !important;
+            border: 1.5px dashed rgba(255,255,255,0.35) !important;
+            border-radius: 8px !important;
+            color: #f5f0e8 !important;
+            -webkit-text-fill-color: #f5f0e8 !important;
+            caret-color: #f5f0e8 !important;
+            font-family: 'DM Mono', monospace !important;
+            font-size: 0.82rem !important;
+            padding: 0.5rem 0.75rem !important;
+        }
+        .custom-input input::placeholder, .custom-textarea textarea::placeholder {
+            color: rgba(245,240,232,0.4) !important;
+            -webkit-text-fill-color: rgba(245,240,232,0.4) !important;
+        }
+        .custom-input > div, .custom-textarea > div,
+        .custom-input > div > div, .custom-textarea > div > div {
+            background: transparent !important;
+            border: none !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        with st.container():
+            st.markdown('<div class="custom-input">', unsafe_allow_html=True)
+            url_input = st.text_input("Enter URL", placeholder="https://example.com/docs", label_visibility="collapsed")
+            st.markdown('</div>', unsafe_allow_html=True)
         if st.button("Fetch Page") and url_input:
             with st.spinner("Fetching..."):
                 raw_text = load_url(url_input)
                 source_label = url_input
 
     else:
-        pasted = st.text_area("Paste your text here", height=220, placeholder="Paste any text — articles, docs, notes...")
+        st.markdown('<div class="custom-textarea">', unsafe_allow_html=True)
+        pasted = st.text_area("Paste your text here", height=220, placeholder="Paste any text — articles, docs, notes...", label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
         source_label = "Pasted text"
         raw_text = pasted
 

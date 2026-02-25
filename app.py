@@ -418,9 +418,11 @@ class DocRetriever:
         self.chunk_sections = chunk_sections or [""] * len(chunks)
         self.chunk_pages    = chunk_pages    or [None] * len(chunks)
 
+        # Dense
         self.embedder = load_embedder()
         self.embeddings = self.embedder.encode(chunks, normalize_embeddings=True)
 
+        # Sparse (still useful for sentence scoring + exact matches)
         self.vectorizer = TfidfVectorizer(
             ngram_range=(1, 2),
             max_features=30000,
@@ -429,20 +431,37 @@ class DocRetriever:
         )
         self.matrix = self.vectorizer.fit_transform(chunks)
 
-    def query(self, question: str, top_k: int = 20):
+    def query(self, question: str, top_k: int = 20, alpha: float = 0.65) -> List[Tuple[str, float, int]]:
+        """
+        Hybrid retrieval:
+          score = alpha * dense + (1-alpha) * sparse
+        Returns (chunk_text, combined_score, chunk_index)
+        """
+        # Dense scores (cosine via dot since normalized)
         q_emb = self.embedder.encode([question], normalize_embeddings=True)
-        scores = np.dot(self.embeddings, q_emb[0])
-        top_idx = np.argsort(scores)[::-1][:top_k]
-        return [(self.chunks[i], float(scores[i]), int(i)) for i in top_idx]
+        dense = np.dot(self.embeddings, q_emb[0])  # shape: (n_chunks,)
 
-    def query(self, question: str, top_k: int = 20) -> List[Tuple[str, float, int]]:
-        """Returns (chunk_text, tfidf_score, chunk_index) — larger pool for reranker."""
+        # Sparse scores (TF-IDF cosine)
         q_vec = self.vectorizer.transform([question])
-        scores = cosine_similarity(q_vec, self.matrix).flatten()
+        sparse = cosine_similarity(q_vec, self.matrix).flatten()
+
+        # Normalize both to [0,1] for stable mixing
+        def norm01(x: np.ndarray) -> np.ndarray:
+            x = np.asarray(x, dtype=float)
+            mn, mx = float(x.min()), float(x.max())
+            if mx - mn < 1e-12:
+                return np.zeros_like(x)
+            return (x - mn) / (mx - mn)
+
+        dense_n = norm01(dense)
+        sparse_n = norm01(sparse)
+        scores = alpha * dense_n + (1.0 - alpha) * sparse_n
+
         top_idx = np.argsort(scores)[::-1][:top_k]
         return [(self.chunks[i], float(scores[i]), int(i)) for i in top_idx]
 
     def score_sentences(self, question: str, sentences: List[str]) -> List[float]:
+        # Keep TF-IDF scoring for your MMR sentence selection
         if not sentences:
             return []
         q_vec = self.vectorizer.transform([question])
@@ -458,7 +477,6 @@ class DocRetriever:
         if page is not None:
             parts.append(f"p. {page}")
         return "  ·  ".join(parts)
-
 
 def build_knowledge_base(text: str, source_name: str,
                          section_map: Optional[Dict[int, str]] = None,

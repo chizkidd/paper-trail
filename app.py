@@ -3,6 +3,7 @@ import io
 import re
 import time
 from typing import List, Tuple, Optional, Dict
+from typing import Any
 
 import numpy as np
 import streamlit as st
@@ -769,6 +770,29 @@ def focused_supporting_from_indices(results, chunks_sents, chosen_chunk_index: i
     return out
 
 
+def build_context_pack(
+    retriever: DocRetriever,
+    reranked: List[Tuple[str, float, int]],
+    max_chunks: int = 4,
+    max_chars: int = 1800,
+) -> str:
+    parts = []
+    total = 0
+    for chunk, score, idx in reranked[:max_chunks]:
+        if score < 0.01:
+            continue
+        attr = retriever.get_attribution(idx)
+        header = f"[{attr}] " if attr else ""
+        piece = header + normalize_ws(chunk)
+        if total + len(piece) > max_chars:
+            piece = piece[: max(0, max_chars - total)]
+        parts.append(piece)
+        total += len(piece)
+        if total >= max_chars:
+            break
+    return "\n\n".join(parts).strip()
+
+
 def answer_question(retriever: DocRetriever, question: str) -> tuple:
     """
     Pipeline: TF-IDF (top-20) -> cross-encoder rerank (top-5)
@@ -776,7 +800,6 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
               -> section attribution
     Returns: (answer_html, answer_text, score, extras, attribution_html)
     """
-    # Step 1+2: retrieve and rerank
     candidates = retriever.query(question, top_k=20)
     reranked   = rerank(question, candidates, top_k=5)
 
@@ -787,44 +810,45 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
     best_chunk, best_score, best_idx = reranked[0]
     label, css_class = match_label(best_score)
 
-    # Step 3: MMR extractive answer (drop chunk_idx for downstream helpers)
     results_for_mmr = [(c, s) for c, s, _ in reranked]
-    pool_sents, meta, chunks_sents = build_sentence_pool(results_for_mmr, max_chunks=3)
+    _, _, chunks_sents = build_sentence_pool(results_for_mmr, max_chunks=3)
+
     answer_sents, (sup_ci, sup_si) = extractive_answer_from_results(
         retriever, question, results_for_mmr, k=2
     )
-    extractive_text = " ".join(answer_sents).strip()
+    extractive_text = remove_display_latex_anywhere(" ".join(answer_sents).strip())
     if not extractive_text:
         extractive_text = " ".join(split_sentences(best_chunk)[:2]).strip()
-    if isinstance(extractive_text, (list, tuple)):
-        extractive_text = " ".join(map(str, extractive_text))
+    extractive_text = as_text(extractive_text)
 
-    # Step 4: HF generation — falls back silently to extractive
-    generated, is_generated = generate_answer_hf(question, best_chunk)
-    answer_text  = generated if is_generated else extractive_text
+    context_pack = build_context_pack(retriever, reranked, max_chunks=4, max_chars=1800)
+    generated, is_generated = generate_answer_hf(question, context_pack)
+
+    answer_text = generated if is_generated else extractive_text
+    answer_text = remove_display_latex_anywhere(as_text(answer_text))
     source_label = "generated answer" if is_generated else "extracted passage"
 
-    # Supporting passage
-    focused = ""
+    # Supporting passage (single block, with fallback)
     if sup_si is not None:
         focused = focused_supporting_from_indices(results_for_mmr, chunks_sents, sup_ci, sup_si)
-    if isinstance(focused, (list, tuple)):
-        focused = " ".join(map(str, focused))
+    else:
+        focused = _focused_supporting_passage(retriever, question, best_chunk, answer_sents)
+    focused = remove_display_latex_anywhere(as_text(focused))
 
-    # Step 5: attribution
+    # Attribution
     attr_text = retriever.get_attribution(best_idx)
     attribution_html = ""
     if attr_text:
         attribution_html = (
             f'<div class="attr-bar">'
             f'<span class="attr-pill">{html.escape(attr_text)}</span>'
-            f'</div>'
+            f"</div>"
         )
 
-    # Build display HTML
     passages = [html.escape(f"{source_label.capitalize()}: {answer_text}")]
     if focused and normalize_ws(focused) != normalize_ws(answer_text):
         passages.append(html.escape(f"Supporting passage: {focused}"))
+
     answer_body = "</p><p>".join(passages)
     answer_html = (
         f'<div class="msg-label">{source_label}</div>'
@@ -835,9 +859,13 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
     extras = []
     seen = set()
     for chunk, score, _ in reranked[1:]:
+        if score < 0.01:
+            continue
         key = normalize_ws(chunk[:200]).lower()
-        if key not in seen and score >= 0.01:
-            seen.add(key); extras.append((chunk, score))
+        if key in seen:
+            continue
+        seen.add(key)
+        extras.append((chunk, score))
 
     return answer_html, answer_text, best_score, extras, attribution_html
 
@@ -975,20 +1003,59 @@ elif not st.session_state.messages:
         unsafe_allow_html=True,
     )
 
+
+
+_LATEX_DISPLAY_RE = re.compile(r"\\\[[\s\S]*?\\\]")
+
+_LABEL_PREFIX_RE = re.compile(r"^\s*[A-Za-z][A-Za-z\s\-]{0,40}:\s+")
+_EMBEDDED_SECTION_HEADING_RE = re.compile(
+    r"""
+    \b\d+(?:\.\d+)+\s+      # 8.9 or 10.3.1
+    [^\n]{1,80}?            # heading text (non-greedy)
+    (?=\n|\s{2,}|\s*[:\-]\s|\.(?:\s|$)|$)
+    """,
+    re.VERBOSE,
+)
+
+def clean_raw_passage(text: str) -> str:
+    if not text:
+        return ""
+    text = _LATEX_DISPLAY_RE.sub("", text)
+    paras = [p.strip() for p in text.split("\n") if p.strip()]
+    out = []
+    for p in paras:
+        p = _LABEL_PREFIX_RE.sub("", p)
+        p = _EMBEDDED_SECTION_HEADING_RE.sub("", p)
+        p = normalize_ws(p)
+        if p:
+            out.append(p)
+    return "\n\n".join(out).strip()
+
+
+
 # ── Chat history ──────────────────────────────────────────────────────────────
 for msg in st.session_state.messages:
     if msg["role"] == "user":
-        st.markdown(f'<div class="msg-user">{html.escape(msg["content"])}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="msg-user">{html.escape(msg.get("content",""))}</div>',
+            unsafe_allow_html=True,
+        )
     else:
-        st.markdown(f'<div class="msg-bot">{msg["content"]}</div>', unsafe_allow_html=True)
+        bot_text = msg.get("answer_text") or ""
+        st.markdown(
+            f'<div class="msg-bot">{html.escape(bot_text)}</div>',
+            unsafe_allow_html=True,
+        )
         if msg.get("attribution_html"):
             st.markdown(msg["attribution_html"], unsafe_allow_html=True)
+
         extras = msg.get("extras", [])
         if extras:
             with st.expander("Show supporting passages"):
                 for chunk, score in extras:
                     st.caption(f"score: {score:.3f}")
-                    st.write(chunk)
+                    st.write(clean_raw_passage(chunk))
+
 
 # ── Live input + streaming ─────────────────────────────────────────────────────
 if st.session_state.retriever:
@@ -1019,7 +1086,7 @@ if st.session_state.retriever:
             with st.expander("Show supporting passages"):
                 for chunk, s in extras:
                     st.caption(f"score: {s:.3f}")
-                    st.write(chunk)
+                    st.write(clean_raw_passage(chunk))
 
         # Persist
         st.session_state.messages.append({"role": "user", "content": q})

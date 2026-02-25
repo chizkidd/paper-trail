@@ -976,6 +976,42 @@ elif not st.session_state.messages:
         unsafe_allow_html=True,
     )
 
+
+
+_LATEX_DISPLAY_RE = re.compile(r"\\\[[\s\S]*?\\\]")
+_SECTION_NUMBER_TITLE_RE = re.compile(r"\b\d+(\.\d+)+\s+[A-Za-z].*")
+_SHORT_HEADING_COLON_RE = re.compile(r"^[A-Za-z\s\-]{1,40}:\s*$")
+
+def clean_raw_passage(text: str) -> str:
+    if not text:
+        return ""
+
+    # Remove display math blocks
+    text = _LATEX_DISPLAY_RE.sub("", text)
+
+    lines = text.splitlines()
+    cleaned_lines = []
+
+    for line in lines:
+        line_stripped = line.strip()
+
+        if not line_stripped:
+            continue
+
+        # Remove numbered section headers like "8.9 Heuristic Search"
+        if _SECTION_NUMBER_TITLE_RE.match(line_stripped):
+            continue
+
+        # Remove short heading lines ending in colon
+        if _SHORT_HEADING_COLON_RE.match(line_stripped):
+            continue
+
+        cleaned_lines.append(line_stripped)
+
+    text = " ".join(cleaned_lines)
+    text = normalize_ws(text)
+    return text
+
 # Chat history
 for msg in st.session_state.messages:
     if msg["role"] == "user":
@@ -988,7 +1024,8 @@ for msg in st.session_state.messages:
         if extras:
             with st.expander("Show raw passages"):
                 for chunk, score in extras:
-                    st.write(chunk)
+                    cleaned = clean_raw_passage(chunk)
+                    st.write(cleaned)
 
 # Question input — st.form fires only on explicit submit and clears after
 if st.session_state.retriever:

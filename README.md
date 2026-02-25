@@ -25,6 +25,10 @@ No hardcoded knowledge base. No hidden training data. Every answer is derived fr
 
 ## Architecture
 
+
+>Chunking $\rightarrow$ Hybrid semantic retrieval $\rightarrow$ neural rerank $\rightarrow$ extractive grounding $\rightarrow$ optional generation
+
+
 ### 1. Chunking
 
 The document is split into overlapping chunks to preserve context across boundaries.

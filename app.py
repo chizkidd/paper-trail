@@ -439,11 +439,14 @@ def is_noise_sentence(s: str) -> bool:
     return False
 
 
+_LATEX_LEADING_BLOCK_RE = re.compile(r"^\s*\\\[[\s\S]*?\\\]\s*")
+
+def strip_leading_display_latex(s: str) -> str:
+    if not s:
+        return ""
+    return _LATEX_LEADING_BLOCK_RE.sub("", s, count=1).strip()
+
 def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) -> List[str]:
-    """
-    Change #1: Extractive 'Answer' first.
-    Take sentences from the best chunk, score them, return top 1-3 in original order.
-    """
     sents = split_sentences(best_chunk)
     if not sents:
         return []
@@ -452,7 +455,6 @@ def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) 
     if not scores:
         return []
 
-    # Pick up to 3 sentences; require minimal relevance so we don't return junk.
     ranked = np.argsort(np.array(scores))[::-1]
     chosen = []
     for idx in ranked:
@@ -464,12 +466,18 @@ def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) 
         if len(chosen) >= 2:
             break
 
+    # If nothing passes, fallback to first non-noise sentence (cleaned)
     if not chosen:
-        # fallback: first sentence is usually better than nothing
-        return [sents[0]] if sents else []
+        for s in sents:
+            if not is_noise_sentence(s):
+                cleaned = strip_leading_display_latex(s)
+                return [cleaned] if cleaned else []
+        return []
 
     chosen_sorted = sorted(set(chosen))
-    return [sents[i] for i in chosen_sorted]
+    picked = [strip_leading_display_latex(sents[i]) for i in chosen_sorted]
+    picked = [x for x in picked if x]
+    return picked
 
 
 def _focused_supporting_passage(
@@ -505,8 +513,8 @@ def _focused_supporting_passage(
                 keep.add(j)
 
         if keep:
-            out = " ".join(sents[i] for i in sorted(keep))
-            return out.strip()
+            out = " ".join(sents[i] for i in sorted(keep)).strip()
+            return strip_leading_display_latex(out)
 
     # fallback: top scored sentences
     scores = retriever.score_sentences(question, sents)
@@ -515,14 +523,16 @@ def _focused_supporting_passage(
     for idx in ranked:
         if scores[idx] < 0.03:
             continue
-        pick.append(idx)
+        pick.append(int(idx))
         if len(pick) >= 4:
             break
     if not pick:
-        return " ".join(sents[:4]).strip()
+        text = " ".join(sents[:4]).strip()
+        return strip_leading_display_latex(text)
 
     pick_sorted = sorted(set(pick))
-    return " ".join(sents[i] for i in pick_sorted).strip()
+    text = " ".join(sents[i] for i in pick_sorted).strip()
+    return strip_leading_display_latex(text)
 
 
 def answer_question(retriever: DocRetriever, question: str) -> tuple:

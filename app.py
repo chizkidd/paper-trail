@@ -213,7 +213,18 @@ def normalize_url(url: str) -> str:
     return url
 
 
+def as_text(x) -> str:
+    if x is None:
+        return ""
+    if isinstance(x, str):
+        return x
+    if isinstance(x, list) or isinstance(x, tuple):
+        # join list elements into text
+        return " ".join(str(i) for i in x if i is not None)
+    return str(x)
+
 def normalize_ws(s: str) -> str:
+    s = as_text(s)
     # Collapse all whitespace to single spaces, trim.
     return re.sub(r"\s+", " ", s or "").strip()
 
@@ -753,9 +764,20 @@ def focused_supporting_from_indices(results, chunks_sents, chosen_chunk_index: i
 
 
 def answer_question(retriever: DocRetriever, question: str) -> tuple:
-    """Returns (answer_html, raw_score)."""
-    results = retriever.query(question)
+    """Returns (answer_html, raw_score, extras)."""
+    results = retriever.query(question, top_k=3)
 
+    if not results or results[0][1] < 0.01:
+        return (
+            "Nothing relevant found. Try rephrasing using specific keywords from the document.",
+            0.0,
+            [],
+        )
+
+    best_chunk, best_score = results[0]
+    label, css_class = match_label(best_score)
+
+    # --- Answer (pooled over top chunks) ---
     pool_sents, meta, chunks_sents = build_sentence_pool(results, max_chunks=3)
 
     answer_sents, (support_chunk_idx, support_sent_idxs) = extractive_answer_from_results(
@@ -763,64 +785,43 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
     )
     answer_text = " ".join(answer_sents).strip()
 
+    # safe fallback if extraction returns nothing
+    if not answer_text:
+        fallback = split_sentences(best_chunk)[:2]
+        answer_text = " ".join(fallback).strip()
+
+    # --- Supporting passage ---
     focused = ""
     if support_sent_idxs is not None:
-        focused = focused_supporting_from_indices(results, chunks_sents, support_chunk_idx, support_sent_idxs)
-    else:
-        focused = _focused_supporting_passage(retriever, question, results[0][0], answer_sents)
-
-    if not results or results[0][1] < 0.01:
-        return (
-            "Nothing relevant found. Try rephrasing using specific keywords from the document.",
-            0.0,
+        focused = focused_supporting_from_indices(
+            results, chunks_sents, support_chunk_idx, support_sent_idxs
         )
+    else:
+        focused = _focused_supporting_passage(retriever, question, best_chunk, answer_sents)
 
-    best_chunk, best_score = results[0]
-    label, css_class = match_label(best_score)
-
-    # Change #1: Extractive answer first
-    answer_sents = _extractive_answer(retriever, question, best_chunk)
-    answer_text = " ".join(answer_sents) if answer_sents else split_sentences(best_chunk)[:2]
-
-    # Change #3: Focused supporting passage
-    focused = _focused_supporting_passage(retriever, question, best_chunk, answer_sents)
+    # Ensure strings (avoid list bugs forever)
+    if isinstance(answer_text, (list, tuple)):
+        answer_text = " ".join(map(str, answer_text))
+    if isinstance(focused, (list, tuple)):
+        focused = " ".join(map(str, focused))
 
     passages = []
-    seen = set()
-
     passages.append(html.escape(f"Answer: {answer_text}"))
 
     if focused and normalize_ws(focused) != normalize_ws(answer_text):
         passages.append(html.escape(f"Supporting passage: {focused}"))
 
-    best_norm = normalize_ws(best_chunk)
-    focused_norm = normalize_ws(focused)
-
-    for chunk, score in results:
+    # --- Extras for expander (raw passages) ---
+    extras = []
+    seen = set()
+    for chunk, score in results[1:]:
         if score < 0.01:
             continue
-
         key = normalize_ws(chunk[:200]).lower()
         if key in seen:
             continue
         seen.add(key)
-
-        chunk_norm = normalize_ws(chunk)
-
-        # skip the full best chunk (already represented)
-        if chunk_norm == best_norm:
-            continue
-
-        # skip chunks that basically contain the focused passage
-        if focused_norm and focused_norm in chunk_norm:
-            continue
-
-    extra = []
-    for chunk, score in results[1:]:
-        if score < 0.01:
-            continue
-        extra.append((chunk, score))
-    st.session_state.last_extras = extra
+        extras.append((chunk, score))
 
     answer_body = "</p><p>".join(passages)
     answer_html = (
@@ -828,7 +829,8 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         f"<p>{answer_body}</p>"
         f'<span class="match-pill {css_class}">{label}</span>'
     )
-    return answer_html, best_score, extra
+
+    return answer_html, best_score, extras
 
 
 

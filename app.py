@@ -55,34 +55,6 @@ section[data-testid="stSidebar"] {
     border-right: none;
 }
 section[data-testid="stSidebar"] * { color: var(--paper) !important; }
-/* URL and Paste Text inputs — match PDF upload box style */
-section[data-testid="stSidebar"] [data-baseweb="input"],
-section[data-testid="stSidebar"] [data-baseweb="textarea"] {
-    background: rgba(255,255,255,0.07) !important;
-    border: 1.5px dashed rgba(255,255,255,0.35) !important;
-    border-radius: 8px !important;
-}
-section[data-testid="stSidebar"] [data-baseweb="input"] input,
-section[data-testid="stSidebar"] [data-baseweb="base-input"] input,
-section[data-testid="stSidebar"] [data-baseweb="textarea"] textarea,
-section[data-testid="stSidebar"] .stTextInput input,
-section[data-testid="stSidebar"] .stTextArea textarea {
-    background: transparent !important;
-    color: #f5f0e8 !important;
-    -webkit-text-fill-color: #f5f0e8 !important;
-    caret-color: #f5f0e8 !important;
-    font-family: 'DM Mono', monospace;
-    font-size: 0.82rem;
-    border: none !important;
-}
-section[data-testid="stSidebar"] [data-baseweb="input"] input::placeholder,
-section[data-testid="stSidebar"] [data-baseweb="base-input"] input::placeholder,
-section[data-testid="stSidebar"] [data-baseweb="textarea"] textarea::placeholder,
-section[data-testid="stSidebar"] .stTextInput input::placeholder,
-section[data-testid="stSidebar"] .stTextArea textarea::placeholder {
-    color: rgba(245,240,232,0.4) !important;
-    -webkit-text-fill-color: rgba(245,240,232,0.4) !important;
-}
 /* File uploader — force dark bg and light text */
 section[data-testid="stSidebar"] [data-testid="stFileUploader"],
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] > div,
@@ -322,46 +294,8 @@ with st.sidebar:
             raw_text = load_pdf(uploaded.read())
             source_label = uploaded.name
 
-    elif source_type == "URL":
-        st.markdown("""
-        <style>
-        .custom-input input, .custom-textarea textarea {
-            background: rgba(255,255,255,0.07) !important;
-            border: 1.5px dashed rgba(255,255,255,0.35) !important;
-            border-radius: 8px !important;
-            color: #f5f0e8 !important;
-            -webkit-text-fill-color: #f5f0e8 !important;
-            caret-color: #f5f0e8 !important;
-            font-family: 'DM Mono', monospace !important;
-            font-size: 0.82rem !important;
-            padding: 0.5rem 0.75rem !important;
-        }
-        .custom-input input::placeholder, .custom-textarea textarea::placeholder {
-            color: rgba(245,240,232,0.4) !important;
-            -webkit-text-fill-color: rgba(245,240,232,0.4) !important;
-        }
-        .custom-input > div, .custom-textarea > div,
-        .custom-input > div > div, .custom-textarea > div > div {
-            background: transparent !important;
-            border: none !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        with st.container():
-            st.markdown('<div class="custom-input">', unsafe_allow_html=True)
-            url_input = st.text_input("Enter URL", placeholder="https://example.com/docs", label_visibility="collapsed")
-            st.markdown('</div>', unsafe_allow_html=True)
-        if st.button("Fetch Page") and url_input:
-            with st.spinner("Fetching..."):
-                raw_text = load_url(url_input)
-                source_label = url_input
-
-    else:
-        st.markdown('<div class="custom-textarea">', unsafe_allow_html=True)
-        pasted = st.text_area("Paste your text here", height=220, placeholder="Paste any text — articles, docs, notes...", label_visibility="collapsed")
-        st.markdown('</div>', unsafe_allow_html=True)
-        source_label = "Pasted text"
-        raw_text = pasted
+    # URL and Paste Text inputs are rendered in the main area (light bg) to avoid
+    # Streamlit BaseWeb inline-style overrides fighting the dark sidebar theme.
 
     if raw_text and st.button("Build Knowledge Base"):
         with st.spinner("Chunking & indexing..."):
@@ -388,6 +322,41 @@ with st.sidebar:
 # ── Main area ──────────────────────────────────────────────────────────────────
 st.markdown('<div class="doc-header">Papertrail</div>', unsafe_allow_html=True)
 st.markdown('<div class="doc-sub">Ask anything from your document</div>', unsafe_allow_html=True)
+
+# URL and Paste Text inputs live here (light bg = no color fighting)
+if source_type == "URL":
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        url_input = st.text_input("Enter URL", placeholder="https://example.com/docs", label_visibility="collapsed")
+    with col2:
+        fetch_clicked = st.button("Fetch Page", use_container_width=True)
+    if fetch_clicked and url_input:
+        with st.spinner("Fetching..."):
+            fetched = load_url(url_input)
+            if fetched:
+                chunks = chunk_text(fetched)
+                if len(chunks) < 2:
+                    st.warning("Not enough text to index.")
+                else:
+                    st.session_state.retriever = DocRetriever(chunks)
+                    st.session_state.source_name = url_input
+                    st.session_state.chunk_count = len(chunks)
+                    st.session_state.messages = []
+                    st.rerun()
+
+elif source_type == "Paste Text":
+    pasted = st.text_area("Paste your text here", height=180, placeholder="Paste any text — articles, docs, notes...", label_visibility="collapsed")
+    if pasted and st.button("Build Knowledge Base", key="build_paste"):
+        with st.spinner("Indexing..."):
+            chunks = chunk_text(pasted)
+            if len(chunks) < 2:
+                st.warning("Not enough text to index.")
+            else:
+                st.session_state.retriever = DocRetriever(chunks)
+                st.session_state.source_name = "Pasted text"
+                st.session_state.chunk_count = len(chunks)
+                st.session_state.messages = []
+                st.rerun()
 
 if st.session_state.source_name:
     st.markdown(

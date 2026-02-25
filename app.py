@@ -64,23 +64,26 @@ section[data-testid="stSidebar"] .stTextArea textarea {
     font-family: 'DM Mono', monospace;
     font-size: 0.82rem;
 }
-section[data-testid="stSidebar"] [data-testid="stFileUploader"] {
-    background: rgba(255,255,255,0.08) !important;
-    border: 1px dashed rgba(255,255,255,0.3) !important;
-    border-radius: 8px;
+/* File uploader — force dark bg and light text */
+section[data-testid="stSidebar"] [data-testid="stFileUploader"],
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] > div,
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] section,
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
+    background: rgba(255,255,255,0.07) !important;
+    border: 1.5px dashed rgba(255,255,255,0.35) !important;
+    border-radius: 8px !important;
 }
-section[data-testid="stSidebar"] [data-testid="stFileUploader"] * {
-    color: var(--paper) !important;
-}
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] span,
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] small {
-    color: rgba(245,240,232,0.7) !important;
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] span,
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] small,
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] p,
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] div {
+    color: rgba(245,240,232,0.85) !important;
 }
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] button {
-    background: rgba(255,255,255,0.15) !important;
+    background: rgba(255,255,255,0.12) !important;
     color: var(--paper) !important;
-    border: 1px solid rgba(255,255,255,0.25) !important;
-    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.3) !important;
+    border-radius: 6px !important;
 }
 section[data-testid="stSidebar"] .stButton button {
     background: var(--accent) !important;

@@ -588,7 +588,7 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         f"<p>{answer_body}</p>"
         f'<span class="match-pill {css_class}">{label}</span>'
     )
-    return answer_html, best_score, extras
+    return answer_html, best_score, extra
 
 
 

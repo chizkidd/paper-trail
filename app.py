@@ -1,5 +1,9 @@
 import html
 import io
+import re
+from typing import List, Tuple
+
+
 
 import numpy as np
 import streamlit as st
@@ -196,7 +200,11 @@ section[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85; }
 """, unsafe_allow_html=True)
 
 
+
+
 # ── Text utilities ─────────────────────────────────────────────────────────────
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
 
 def normalize_url(url: str) -> str:
     url = url.strip()
@@ -205,24 +213,57 @@ def normalize_url(url: str) -> str:
     return url
 
 
-def chunk_text(text: str, chunk_size: int = 150, overlap: int = 40) -> list:
+def normalize_ws(s: str) -> str:
+    # Collapse all whitespace to single spaces, trim.
+    return re.sub(r"\s+", " ", s or "").strip()
+
+
+def dedup_paragraphs(text: str) -> str:
     """
-    Split on paragraph/sentence boundaries first, then enforce max chunk size.
-    This prevents chunks that start or end mid-sentence.
+    Remove duplicated paragraphs/lines that often appear in scraped HTML or
+    converted PDFs (templates, repeated headers, repeated blocks).
+
+    De-dup is exact after whitespace normalization (keeps first occurrence).
     """
-    # Split into natural paragraphs first
+    if not text:
+        return ""
+
+    lines = [ln.strip() for ln in text.splitlines()]
+    paras = [ln for ln in lines if ln]  # treat each non-empty line as a paragraph unit
+
+    seen = set()
+    out = []
+    for p in paras:
+        key = normalize_ws(p).lower()
+        if not key:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+
+    return "\n".join(out).strip()
+
+
+def chunk_text(text: str, chunk_size: int = 150, overlap: int = 40) -> List[str]:
+    """
+    Split on paragraph boundaries first, then enforce a max chunk size (in words),
+    using overlap to preserve local context.
+    """
     paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
-    chunks = []
-    current_words = []
+    chunks: List[str] = []
+    current_words: List[str] = []
 
     for para in paragraphs:
         para_words = para.split()
+
         # If adding this paragraph would exceed chunk_size, flush current buffer
         if current_words and len(current_words) + len(para_words) > chunk_size:
             chunk = " ".join(current_words)
             if len(current_words) >= 10:  # min 10 words to be useful
                 chunks.append(chunk)
-            # Keep overlap words for context continuity
+
+            # Keep overlap words for continuity
             current_words = current_words[-overlap:] + para_words
         else:
             current_words.extend(para_words)
@@ -232,7 +273,7 @@ def chunk_text(text: str, chunk_size: int = 150, overlap: int = 40) -> list:
             chunk = " ".join(current_words[:chunk_size])
             if len(chunk.strip()) >= 10:
                 chunks.append(chunk)
-            current_words = current_words[chunk_size - overlap:]
+            current_words = current_words[chunk_size - overlap :]
 
     # Flush remainder
     if len(current_words) >= 10:
@@ -241,22 +282,30 @@ def chunk_text(text: str, chunk_size: int = 150, overlap: int = 40) -> list:
     return chunks
 
 
-def match_label(score: float) -> tuple:
+def match_label(score: float) -> Tuple[str, str]:
     """Return (label, css_class) for a cosine similarity score."""
     if score >= 0.25:
         return "strong match", "match-high"
-    elif score >= 0.08:
+    if score >= 0.08:
         return "partial match", "match-medium"
-    else:
-        return "weak match", "match-low"
+    return "weak match", "match-low"
+
+
+def split_sentences(text: str) -> List[str]:
+    text = normalize_ws(text)
+    if not text:
+        return []
+    # Basic sentence splitting; good enough for an extractive baseline.
+    sents = [s.strip() for s in _SENT_SPLIT_RE.split(text) if s.strip()]
+    return sents
 
 
 # ── Source loaders ─────────────────────────────────────────────────────────────
-
-def load_pdf(file_bytes: bytes) -> tuple:
+def load_pdf(file_bytes: bytes) -> Tuple[str, str]:
     """Returns (text, error)."""
     if not PDF_SUPPORT:
         return "", "pdfplumber not installed. Add it to requirements.txt."
+
     try:
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             pages = [p.extract_text() or "" for p in pdf.pages]
@@ -268,27 +317,35 @@ def load_pdf(file_bytes: bytes) -> tuple:
         return "", f"PDF parse error: {e}"
 
 
-def load_url(url: str) -> tuple:
+def load_url(url: str) -> Tuple[str, str]:
     """Returns (text, error)."""
     if not URL_SUPPORT:
         return "", "requests/beautifulsoup4 not installed."
+
     url = normalize_url(url)
     if not url:
         return "", "Please enter a URL."
+
     try:
-        resp = requests.get(url, timeout=15, headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-        })
+        resp = requests.get(
+            url,
+            timeout=15,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+            },
+        )
         resp.raise_for_status()
+
         soup = BeautifulSoup(resp.text, "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
             tag.decompose()
+
         text = soup.get_text(separator="\n", strip=True).strip()
         if len(text) < 100:
             return "", (
@@ -296,7 +353,9 @@ def load_url(url: str) -> tuple:
                 "The site may require JavaScript. "
                 "Copy the page text and use Paste Text instead."
             )
+
         return text, ""
+
     except requests.exceptions.Timeout:
         return "", "Request timed out (15s). Try Paste Text instead."
     except requests.exceptions.ConnectionError:
@@ -308,9 +367,8 @@ def load_url(url: str) -> tuple:
 
 
 # ── Retriever ──────────────────────────────────────────────────────────────────
-
 class DocRetriever:
-    def __init__(self, chunks: list):
+    def __init__(self, chunks: List[str]):
         self.chunks = chunks
         self.vectorizer = TfidfVectorizer(
             ngram_range=(1, 2),
@@ -320,20 +378,35 @@ class DocRetriever:
         )
         self.matrix = self.vectorizer.fit_transform(chunks)
 
-    def query(self, question: str, top_k: int = 3) -> list:
+    def query(self, question: str, top_k: int = 3) -> List[Tuple[str, float]]:
         q_vec = self.vectorizer.transform([question])
         scores = cosine_similarity(q_vec, self.matrix).flatten()
         top_idx = np.argsort(scores)[::-1][:top_k]
-        # No hard threshold — always return top_k results so the user gets
-        # something, and we show them the match quality label instead.
+
+        # No hard threshold: always return top_k and label match quality.
         return [(self.chunks[i], float(scores[i])) for i in top_idx]
+
+    def score_sentences(self, question: str, sentences: List[str]) -> List[float]:
+        if not sentences:
+            return []
+        q_vec = self.vectorizer.transform([question])
+        s_mat = self.vectorizer.transform(sentences)
+        s_scores = cosine_similarity(q_vec, s_mat).flatten()
+        return [float(x) for x in s_scores]
 
 
 def build_knowledge_base(text: str, source_name: str) -> str:
-    """Index text, store retriever in session state. Returns error or ''."""
-    chunks = chunk_text(text)
+    """
+    1) De-dup paragraphs (fix repeated blocks)
+    2) Chunk
+    3) Fit TF-IDF retriever and store in session state
+    """
+    cleaned = dedup_paragraphs(text)
+    chunks = chunk_text(cleaned)
+
     if len(chunks) < 2:
         return "Not enough text to index. Try a longer document."
+
     try:
         st.session_state.retriever = DocRetriever(chunks)
         st.session_state.source_name = source_name
@@ -342,6 +415,90 @@ def build_knowledge_base(text: str, source_name: str) -> str:
         return ""
     except Exception as e:
         return f"Indexing error: {e}"
+
+
+def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) -> List[str]:
+    """
+    Change #1: Extractive 'Answer' first.
+    Take sentences from the best chunk, score them, return top 1-3 in original order.
+    """
+    sents = split_sentences(best_chunk)
+    if not sents:
+        return []
+
+    scores = retriever.score_sentences(question, sents)
+    if not scores:
+        return []
+
+    # Pick up to 3 sentences; require minimal relevance so we don't return junk.
+    ranked = np.argsort(np.array(scores))[::-1]
+    chosen = []
+    for idx in ranked:
+        if scores[idx] < 0.05:
+            continue
+        chosen.append(idx)
+        if len(chosen) >= 3:
+            break
+
+    if not chosen:
+        # fallback: first sentence is usually better than nothing
+        return [sents[0]] if sents else []
+
+    chosen_sorted = sorted(set(chosen))
+    return [sents[i] for i in chosen_sorted]
+
+
+def _focused_supporting_passage(
+    retriever: DocRetriever, question: str, best_chunk: str, answer_sents: List[str]
+) -> str:
+    """
+    Change #3: Answer-focused passage.
+    Build a short 'supporting passage' from the best chunk that covers the answer,
+    instead of dumping the entire chunk.
+
+    Heuristic:
+    - If we have answer sentences, include them plus up to 2 adjacent sentences each.
+    - Else include top 4 scored sentences (in order).
+    """
+    sents = split_sentences(best_chunk)
+    if not sents:
+        return best_chunk
+
+    if answer_sents:
+        # Map answer sentences back to indices (best effort via substring match)
+        idxs = set()
+        for a in answer_sents:
+            a_norm = normalize_ws(a)
+            for i, s in enumerate(sents):
+                if a_norm and a_norm in normalize_ws(s):
+                    idxs.add(i)
+                    break
+
+        # Expand window around each found index
+        keep = set()
+        for i in idxs:
+            for j in range(max(0, i - 2), min(len(sents), i + 3)):
+                keep.add(j)
+
+        if keep:
+            out = " ".join(sents[i] for i in sorted(keep))
+            return out.strip()
+
+    # fallback: top scored sentences
+    scores = retriever.score_sentences(question, sents)
+    ranked = np.argsort(np.array(scores))[::-1]
+    pick = []
+    for idx in ranked:
+        if scores[idx] < 0.03:
+            continue
+        pick.append(idx)
+        if len(pick) >= 4:
+            break
+    if not pick:
+        return " ".join(sents[:4]).strip()
+
+    pick_sorted = sorted(set(pick))
+    return " ".join(sents[i] for i in pick_sorted).strip()
 
 
 def answer_question(retriever: DocRetriever, question: str) -> tuple:
@@ -357,17 +514,43 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
     best_chunk, best_score = results[0]
     label, css_class = match_label(best_score)
 
-    # Build a clean answer: show the best passage, then supporting passages
+    # Change #1: Extractive answer first
+    answer_sents = _extractive_answer(retriever, question, best_chunk)
+    answer_text = " ".join(answer_sents).strip() if answer_sents else best_chunk
+
+    # Change #3: Focused supporting passage
+    focused = _focused_supporting_passage(retriever, question, best_chunk, answer_sents)
+
     passages = []
     seen = set()
+
+    passages.append(html.escape(f"Answer: {answer_text}"))
+
+    if focused and normalize_ws(focused) != normalize_ws(answer_text):
+        passages.append(html.escape(f"Supporting passage: {focused}"))
+
+    best_norm = normalize_ws(best_chunk)
+    focused_norm = normalize_ws(focused)
+
     for chunk, score in results:
         if score < 0.01:
             continue
-        # Deduplicate near-identical chunks (overlap can produce similar content)
-        key = chunk[:60]
+
+        key = normalize_ws(chunk[:200]).lower()
         if key in seen:
             continue
         seen.add(key)
+
+        chunk_norm = normalize_ws(chunk)
+
+        # skip the full best chunk (already represented)
+        if chunk_norm == best_norm:
+            continue
+
+        # skip chunks that basically contain the focused passage
+        if focused_norm and focused_norm in chunk_norm:
+            continue
+
         passages.append(html.escape(chunk))
 
     answer_body = "</p><p>".join(passages)
@@ -377,6 +560,7 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         f'<span class="match-pill {css_class}">{label}</span>'
     )
     return answer_html, best_score
+
 
 
 # ── Session state init ─────────────────────────────────────────────────────────

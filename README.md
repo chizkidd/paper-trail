@@ -2,7 +2,7 @@
 
 Ask questions. Get grounded answers from any document you bring.
 
-Papertrail is a document Q&A agent built with Streamlit. It indexes your document, retrieves relevant evidence, and generates grounded answers with clear attribution.
+Papertrail is a simple document Q&A agent built with Streamlit. It indexes your document, retrieves relevant evidence, and generates grounded answers with clear attribution.
 
 No hardcoded knowledge base. No hidden training data. Every answer is derived from your document.
 
@@ -133,7 +133,5 @@ Hybrid retrieval solves this while still preserving exact keyword matching.
 
 Papertrail is built around one principle:
 
-The model should answer from your document, not from its training data.
-
-Every answer is grounded in retrieved evidence.
+>_The model should answer from your document, not from its training data. Every answer is grounded in retrieved evidence._
 

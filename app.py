@@ -424,12 +424,17 @@ def build_knowledge_base(text: str, source_name: str) -> str:
     except Exception as e:
         return f"Indexing error: {e}"
 
-def is_structural_sentence(s: str) -> bool:
-    # Ignore LaTeX-only or very short structural lines
+_LATEX_BLOCK_RE = re.compile(r"^\s*\\\[[\s\S]*\\\]\s*$")
+
+def is_noise_sentence(s: str) -> bool:
     s_norm = normalize_ws(s)
-    if len(s_norm) < 30:
+    if not s_norm:
         return True
-    if s_norm.startswith("\\[") and s_norm.endswith("\\]"):
+    # Drop pure LaTeX display blocks
+    if _LATEX_BLOCK_RE.match(s_norm):
+        return True
+    # Drop very short structural fragments
+    if len(s_norm) < 35:
         return True
     return False
 
@@ -453,9 +458,9 @@ def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) 
     for idx in ranked:
         if scores[idx] < 0.08:
             continue
-        if is_structural_sentence(sents[idx]):
+        if is_noise_sentence(sents[idx]):
             continue
-        chosen.append(idx)
+        chosen.append(int(idx))
         if len(chosen) >= 2:
             break
 
@@ -570,7 +575,12 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         if focused_norm and focused_norm in chunk_norm:
             continue
 
-        passages.append(html.escape(chunk))
+    extra = []
+    for chunk, score in results[1:]:
+        if score < 0.01:
+            continue
+        extra.append((chunk, score))
+    st.session_state.last_extras = extra
 
     answer_body = "</p><p>".join(passages)
     answer_html = (
@@ -578,7 +588,7 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         f"<p>{answer_body}</p>"
         f'<span class="match-pill {css_class}">{label}</span>'
     )
-    return answer_html, best_score
+    return answer_html, best_score, extras
 
 
 
@@ -734,6 +744,11 @@ for msg in st.session_state.messages:
     else:
         # Bot messages contain pre-built HTML (already escaped where needed)
         st.markdown(f'<div class="msg-bot">{msg["content"]}</div>', unsafe_allow_html=True)
+        extras = msg.get("extras", [])
+        if extras:
+            with st.expander("Show more passages"):
+                for chunk, score in extras:
+                    st.write(chunk)
 
 # Question input — st.form fires only on explicit submit and clears after
 if st.session_state.retriever:
@@ -750,7 +765,7 @@ if st.session_state.retriever:
 
     if submitted and question.strip():
         q = question.strip()
-        answer_html, score = answer_question(st.session_state.retriever, q)
+        answer_html, score, extras = answer_question(st.session_state.retriever, q)
         st.session_state.messages.append({"role": "user", "content": q})
-        st.session_state.messages.append({"role": "assistant", "content": answer_html})
+        st.session_state.messages.append({"role": "assistant", "content": answer_html, "extras": extras})
         st.rerun()

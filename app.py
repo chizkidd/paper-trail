@@ -55,29 +55,33 @@ section[data-testid="stSidebar"] {
     border-right: none;
 }
 section[data-testid="stSidebar"] * { color: var(--paper) !important; }
+/* URL and Paste Text inputs — match PDF upload box style */
+section[data-testid="stSidebar"] [data-baseweb="input"],
+section[data-testid="stSidebar"] [data-baseweb="textarea"] {
+    background: rgba(255,255,255,0.07) !important;
+    border: 1.5px dashed rgba(255,255,255,0.35) !important;
+    border-radius: 8px !important;
+}
+section[data-testid="stSidebar"] [data-baseweb="input"] input,
+section[data-testid="stSidebar"] [data-baseweb="base-input"] input,
+section[data-testid="stSidebar"] [data-baseweb="textarea"] textarea,
 section[data-testid="stSidebar"] .stTextInput input,
-section[data-testid="stSidebar"] .stTextInput input::placeholder,
-section[data-testid="stSidebar"] .stTextArea textarea,
-section[data-testid="stSidebar"] .stTextArea textarea::placeholder,
-section[data-testid="stSidebar"] [data-testid="stTextInput"] input,
-section[data-testid="stSidebar"] [data-testid="stTextArea"] textarea {
-    background: rgba(255,255,255,0.08) !important;
-    border: 1px solid rgba(255,255,255,0.25) !important;
-    color: var(--paper) !important;
-    border-radius: 6px;
+section[data-testid="stSidebar"] .stTextArea textarea {
+    background: transparent !important;
+    color: #f5f0e8 !important;
+    -webkit-text-fill-color: #f5f0e8 !important;
+    caret-color: #f5f0e8 !important;
     font-family: 'DM Mono', monospace;
     font-size: 0.82rem;
-    -webkit-text-fill-color: var(--paper) !important;
+    border: none !important;
 }
+section[data-testid="stSidebar"] [data-baseweb="input"] input::placeholder,
+section[data-testid="stSidebar"] [data-baseweb="base-input"] input::placeholder,
+section[data-testid="stSidebar"] [data-baseweb="textarea"] textarea::placeholder,
 section[data-testid="stSidebar"] .stTextInput input::placeholder,
 section[data-testid="stSidebar"] .stTextArea textarea::placeholder {
-    color: rgba(245,240,232,0.45) !important;
-    -webkit-text-fill-color: rgba(245,240,232,0.45) !important;
-}
-section[data-testid="stSidebar"] [data-baseweb="textarea"],
-section[data-testid="stSidebar"] [data-baseweb="input"] {
-    background: rgba(255,255,255,0.08) !important;
-    border-color: rgba(255,255,255,0.25) !important;
+    color: rgba(245,240,232,0.4) !important;
+    -webkit-text-fill-color: rgba(245,240,232,0.4) !important;
 }
 /* File uploader — force dark bg and light text */
 section[data-testid="stSidebar"] [data-testid="stFileUploader"],

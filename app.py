@@ -1,9 +1,8 @@
 import html
 import io
 import re
-from typing import List, Tuple
-
-
+import time
+from typing import List, Tuple, Optional
 
 import numpy as np
 import streamlit as st
@@ -43,6 +42,12 @@ st.markdown("""
     --accent: #c0392b;
     --muted:  #7a7060;
     --border: #d4cfc4;
+    --green:  #155724;
+    --green-bg: #d4edda;
+    --yellow: #856404;
+    --yellow-bg: #fff3cd;
+    --red:    #721c24;
+    --red-bg: #f8d7da;
 }
 
 html, body, [class*="css"] {
@@ -55,7 +60,6 @@ html, body, [class*="css"] {
 /* ── Sidebar ── */
 section[data-testid="stSidebar"] { background: var(--ink); border-right: none; }
 section[data-testid="stSidebar"] * { color: var(--paper) !important; }
-
 section[data-testid="stSidebar"] [data-testid="stFileUploader"],
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] > div,
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] section,
@@ -70,7 +74,12 @@ section[data-testid="stSidebar"] [data-testid="stFileUploader"] p,
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] div {
     color: rgba(245,240,232,0.85) !important;
 }
-section[data-testid="stSidebar"] [data-testid="stFileUploader"] button,
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] button {
+    background: rgba(255,255,255,0.15) !important;
+    border: 1px solid rgba(255,255,255,0.3) !important;
+    border-radius: 6px !important;
+    color: var(--paper) !important;
+}
 section[data-testid="stSidebar"] .stButton button {
     background: var(--accent) !important;
     color: white !important;
@@ -80,13 +89,9 @@ section[data-testid="stSidebar"] .stButton button {
     font-weight: 500;
     transition: opacity 0.15s;
 }
-section[data-testid="stSidebar"] [data-testid="stFileUploader"] button {
-    background: rgba(255,255,255,0.15) !important;
-    border: 1px solid rgba(255,255,255,0.3) !important;
-}
 section[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85; }
 
-/* ── Main typography ── */
+/* ── Header ── */
 .doc-header {
     font-family: 'DM Serif Display', serif;
     font-size: 2.6rem;
@@ -114,7 +119,7 @@ section[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85; }
 }
 .source-badge {
     background: var(--ink);
-    color: var(--paper);
+    color: var(--paper) !important;
     font-family: 'DM Mono', monospace;
     font-size: 0.7rem;
     padding: 3px 10px;
@@ -147,7 +152,7 @@ section[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85; }
     border: 1px solid var(--border);
     border-radius: 12px 12px 12px 4px;
     padding: 0.85rem 1.1rem;
-    margin: 0.75rem clamp(20px, 10%, 80px) 0.75rem 0;
+    margin: 0.75rem clamp(20px, 10%, 80px) 0.25rem 0;
     font-size: 0.95rem;
     line-height: 1.65;
     box-shadow: 0 1px 4px rgba(0,0,0,0.05);
@@ -161,18 +166,43 @@ section[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85; }
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
+
+/* ── Attribution bar ── */
+.attribution-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 0.3rem clamp(20px, 10%, 80px) 0.75rem 0;
+    padding: 0;
+}
+.attr-section {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--ink);
+    background: #e8e3d8;
+    border: 1px solid var(--border);
+    padding: 2px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.03em;
+}
+.attr-page {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--muted);
+    padding: 2px 0;
+}
 .match-pill {
     display: inline-block;
     font-family: 'DM Mono', monospace;
     font-size: 0.65rem;
     padding: 2px 7px;
     border-radius: 20px;
-    margin-top: 0.5rem;
     letter-spacing: 0.04em;
 }
-.match-high   { background: #d4edda; color: #155724; }
-.match-medium { background: #fff3cd; color: #856404; }
-.match-low    { background: #f8d7da; color: #721c24; }
+.match-high   { background: var(--green-bg);  color: var(--green); }
+.match-medium { background: var(--yellow-bg); color: var(--yellow); }
+.match-low    { background: var(--red-bg);    color: var(--red); }
 
 /* ── Empty state ── */
 .empty-state {
@@ -200,10 +230,52 @@ section[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85; }
 """, unsafe_allow_html=True)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# DATA STRUCTURES
+# ══════════════════════════════════════════════════════════════════════════════
+
+class Chunk:
+    """A text chunk with source attribution metadata."""
+    __slots__ = ("text", "section", "page", "source_type")
+
+    def __init__(self, text: str, section: str = "", page: Optional[int] = None, source_type: str = ""):
+        self.text = text
+        self.section = section          # nearest heading before this chunk
+        self.page = page                # PDF page number (1-indexed), None for URL/paste
+        self.source_type = source_type  # "pdf" | "url" | "paste"
+
+    def attribution_label(self) -> str:
+        """Human-readable source label for the attribution bar."""
+        parts = []
+        if self.section:
+            parts.append(f"§ {self.section}")
+        if self.page is not None:
+            parts.append(f"page {self.page}")
+        return "  ·  ".join(parts) if parts else ""
 
 
-# ── Text utilities ─────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# TEXT UTILITIES
+# ══════════════════════════════════════════════════════════════════════════════
+
 _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_LATEX_DISPLAY_RE = re.compile(r"\\\[[\s\S]*?\\\]")
+_LATEX_BLOCK_RE = re.compile(r"^\s*\\\[[\s\S]*\\\]\s*$")
+_LATEX_LEADING_RE = re.compile(r"^\s*\\\[[\s\S]*?\\\]\s*")
+
+# Detects likely section headings in plain text:
+# short line, no trailing period, optionally starts with a number
+_HEADING_RE = re.compile(r"^(?:\d+[\.\d]*\s+)?[A-Z][^\n]{0,80}$")
+
+
+def normalize_ws(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "")).strip()
+
+
+def strip_latex(s: str) -> str:
+    s = _LATEX_DISPLAY_RE.sub("", s)
+    s = _LATEX_LEADING_RE.sub("", s)
+    return normalize_ws(s)
 
 
 def normalize_url(url: str) -> str:
@@ -213,181 +285,245 @@ def normalize_url(url: str) -> str:
     return url
 
 
-def as_text(x) -> str:
-    if x is None:
-        return ""
-    if isinstance(x, str):
-        return x
-    if isinstance(x, list) or isinstance(x, tuple):
-        # join list elements into text
-        return " ".join(str(i) for i in x if i is not None)
-    return str(x)
-
-def normalize_ws(s: str) -> str:
-    s = as_text(s)
-    # Collapse all whitespace to single spaces, trim.
-    return re.sub(r"\s+", " ", s or "").strip()
-
-
-def dedup_paragraphs(text: str) -> str:
-    """
-    Remove duplicated paragraphs/lines that often appear in scraped HTML or
-    converted PDFs (templates, repeated headers, repeated blocks).
-
-    De-dup is exact after whitespace normalization (keeps first occurrence).
-    """
-    if not text:
-        return ""
-
-    lines = [ln.strip() for ln in text.splitlines()]
-    paras = [ln for ln in lines if ln]  # treat each non-empty line as a paragraph unit
-
-    seen = set()
-    out = []
-
-    for p in paras:
-        key = normalize_ws(p).lower()
-        if not key:
-            continue
-
-        # Keep short lines (likely headings or structural labels)
-        if len(key) < 40:
-            out.append(p)
-            continue
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-        out.append(p)
-
-    return "\n".join(out).strip()
-
-
-def chunk_text(text: str, chunk_size: int = 150, overlap: int = 40) -> List[str]:
-    """
-    Split on paragraph boundaries first, then enforce a max chunk size (in words),
-    using overlap to preserve local context.
-    """
-    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
-    chunks: List[str] = []
-    current_words: List[str] = []
-
-    for para in paragraphs:
-        para_words = para.split()
-
-        # If adding this paragraph would exceed chunk_size, flush current buffer
-        if current_words and len(current_words) + len(para_words) > chunk_size:
-            chunk = " ".join(current_words)
-            if len(current_words) >= 10:  # min 10 words to be useful
-                chunks.append(chunk)
-
-            # Keep overlap words for continuity
-            current_words = current_words[-overlap:] + para_words
-        else:
-            current_words.extend(para_words)
-
-        # Force flush if buffer is huge
-        while len(current_words) > chunk_size * 1.5:
-            chunk = " ".join(current_words[:chunk_size])
-            if len(chunk.strip()) >= 10:
-                chunks.append(chunk)
-            current_words = current_words[chunk_size - overlap :]
-
-    # Flush remainder
-    if len(current_words) >= 10:
-        chunks.append(" ".join(current_words))
-
-    return chunks
-
-
-def match_label(score: float) -> Tuple[str, str]:
-    """Return (label, css_class) for a cosine similarity score."""
-    if score >= 0.25:
-        return "strong match", "match-high"
-    if score >= 0.08:
-        return "partial match", "match-medium"
-    return "weak match", "match-low"
-
-
 def split_sentences(text: str) -> List[str]:
     text = normalize_ws(text)
     if not text:
         return []
-    # Basic sentence splitting; good enough for an extractive baseline.
-    sents = [s.strip() for s in _SENT_SPLIT_RE.split(text) if s.strip()]
-    return sents
+    return [s.strip() for s in _SENT_SPLIT_RE.split(text) if s.strip()]
 
 
-# ── Source loaders ─────────────────────────────────────────────────────────────
-def load_pdf(file_bytes: bytes) -> Tuple[str, str]:
-    """Returns (text, error)."""
+def is_noise_sentence(s: str) -> bool:
+    s = normalize_ws(s)
+    if not s or len(s) < 35:
+        return True
+    if _LATEX_BLOCK_RE.match(s):
+        return True
+    return False
+
+
+def dedup_paragraphs(text: str) -> str:
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    seen, out = set(), []
+    for p in lines:
+        key = normalize_ws(p).lower()
+        if not key:
+            continue
+        if len(key) < 40:   # keep short lines (headings)
+            out.append(p)
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return "\n".join(out).strip()
+
+
+def detect_heading(line: str) -> Optional[str]:
+    """Return the heading text if this line looks like a section heading, else None."""
+    line = line.strip()
+    if not line or len(line) > 100 or line.endswith("."):
+        return None
+    if _HEADING_RE.match(line):
+        return line
+    return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SOURCE LOADERS  (return List[Chunk], error_str)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_chunks_from_text(
+    text: str,
+    source_type: str,
+    section_map: Optional[List[Tuple[int, str]]] = None,  # [(word_offset, heading)]
+    page_map: Optional[List[Tuple[int, int]]] = None,     # [(word_offset, page_num)]
+    chunk_size: int = 150,
+    overlap: int = 40,
+) -> List[Chunk]:
+    """
+    Core chunker. Respects paragraph boundaries, tags each chunk with the
+    nearest preceding heading and page number from the provided maps.
+    """
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+
+    raw_chunks: List[str] = []
+    current_words: List[str] = []
+    word_offsets: List[int] = []  # starting word offset of each raw_chunk
+    global_word_offset = 0
+
+    for para in paragraphs:
+        para_words = para.split()
+        if current_words and len(current_words) + len(para_words) > chunk_size:
+            chunk_text = " ".join(current_words)
+            if len(current_words) >= 10:
+                raw_chunks.append(chunk_text)
+                word_offsets.append(global_word_offset - len(current_words))
+            current_words = current_words[-overlap:] + para_words
+        else:
+            current_words.extend(para_words)
+
+        global_word_offset += len(para_words)
+
+        while len(current_words) > chunk_size * 1.5:
+            chunk_text = " ".join(current_words[:chunk_size])
+            if len(chunk_text.strip()) >= 10:
+                raw_chunks.append(chunk_text)
+                word_offsets.append(global_word_offset - len(current_words))
+            current_words = current_words[chunk_size - overlap:]
+
+    if len(current_words) >= 10:
+        raw_chunks.append(" ".join(current_words))
+        word_offsets.append(global_word_offset - len(current_words))
+
+    # Resolve section and page for each chunk via maps
+    def resolve(maps, offset):
+        if not maps:
+            return None
+        val = None
+        for map_offset, map_val in maps:
+            if map_offset <= offset:
+                val = map_val
+            else:
+                break
+        return val
+
+    chunks = []
+    for i, (raw, offset) in enumerate(zip(raw_chunks, word_offsets)):
+        section = resolve(section_map, offset) or ""
+        page = resolve(page_map, offset)
+        chunks.append(Chunk(text=raw, section=section, page=page, source_type=source_type))
+
+    return chunks
+
+
+def load_pdf(file_bytes: bytes) -> Tuple[List[Chunk], str]:
     if not PDF_SUPPORT:
-        return "", "pdfplumber not installed. Add it to requirements.txt."
-
+        return [], "pdfplumber not installed. Add it to requirements.txt."
     try:
+        all_lines: List[Tuple[int, str, int]] = []  # (word_offset, line_text, page_num)
+        word_offset = 0
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            pages = [p.extract_text() or "" for p in pdf.pages]
-        text = "\n\n".join(pages).strip()
-        if not text:
-            return "", "PDF parsed but no text found. It may be a scanned/image-only PDF."
-        return text, ""
+            for page_num, page in enumerate(pdf.pages, start=1):
+                raw = page.extract_text() or ""
+                for line in raw.splitlines():
+                    line = line.strip()
+                    if line:
+                        all_lines.append((word_offset, line, page_num))
+                        word_offset += len(line.split())
+
+        if not all_lines:
+            return [], "PDF parsed but no text found. It may be a scanned/image-only PDF."
+
+        # Build section and page maps
+        section_map: List[Tuple[int, str]] = []
+        page_map: List[Tuple[int, int]] = []
+        full_text_lines = []
+
+        current_page = None
+        for offset, line, page_num in all_lines:
+            if page_num != current_page:
+                page_map.append((offset, page_num))
+                current_page = page_num
+            heading = detect_heading(line)
+            if heading:
+                section_map.append((offset, heading))
+            full_text_lines.append(line)
+
+        full_text = "\n".join(full_text_lines)
+        full_text = dedup_paragraphs(full_text)
+        chunks = _make_chunks_from_text(full_text, "pdf", section_map, page_map)
+
+        if not chunks:
+            return [], "Could not extract usable chunks from this PDF."
+        return chunks, ""
     except Exception as e:
-        return "", f"PDF parse error: {e}"
+        return [], f"PDF parse error: {e}"
 
 
-def load_url(url: str) -> Tuple[str, str]:
-    """Returns (text, error)."""
+def load_url(url: str) -> Tuple[List[Chunk], str]:
     if not URL_SUPPORT:
-        return "", "requests/beautifulsoup4 not installed."
-
+        return [], "requests/beautifulsoup4 not installed."
     url = normalize_url(url)
     if not url:
-        return "", "Please enter a URL."
-
+        return [], "Please enter a URL."
     try:
-        resp = requests.get(
-            url,
-            timeout=15,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-            },
-        )
+        resp = requests.get(url, timeout=15, headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        })
         resp.raise_for_status()
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
-            tag.decompose()
 
-        text = soup.get_text(separator="\n", strip=True).strip()
+        # Extract heading structure BEFORE stripping tags
+        section_map: List[Tuple[int, str]] = []
+        word_offset = 0
+        text_lines = []
+
+        for tag in soup.find_all(["h1", "h2", "h3", "h4", "p", "li", "pre", "blockquote"]):
+            if tag.name in ("h1", "h2", "h3", "h4"):
+                heading_text = tag.get_text(strip=True)
+                if heading_text:
+                    section_map.append((word_offset, heading_text[:80]))
+            line = tag.get_text(separator=" ", strip=True)
+            if line:
+                text_lines.append(line)
+                word_offset += len(line.split())
+
+        text = "\n".join(text_lines).strip()
         if len(text) < 100:
-            return "", (
+            return [], (
                 "Page fetched but no usable text extracted. "
                 "The site may require JavaScript. "
-                "Copy the page text and use Paste Text instead."
+                "Try copying the text and using Paste Text instead."
             )
 
-        return text, ""
+        text = dedup_paragraphs(text)
+        chunks = _make_chunks_from_text(text, "url", section_map=section_map, page_map=None)
+        if not chunks:
+            return [], "Could not extract usable chunks from this page."
+        return chunks, ""
 
     except requests.exceptions.Timeout:
-        return "", "Request timed out (15s). Try Paste Text instead."
+        return [], "Request timed out (15s). Try Paste Text instead."
     except requests.exceptions.ConnectionError:
-        return "", "Could not connect. Check the URL and try again."
+        return [], "Could not connect. Check the URL and try again."
     except requests.exceptions.HTTPError as e:
-        return "", f"HTTP {e.response.status_code}: page may require login or does not exist."
+        return [], f"HTTP {e.response.status_code}: page may require login or does not exist."
     except Exception as e:
-        return "", f"Unexpected fetch error: {e}"
+        return [], f"Unexpected fetch error: {e}"
 
 
-# ── Retriever ──────────────────────────────────────────────────────────────────
+def load_paste(text: str) -> Tuple[List[Chunk], str]:
+    if not text.strip():
+        return [], "No text provided."
+    # Detect headings from plain text
+    section_map: List[Tuple[int, str]] = []
+    word_offset = 0
+    for line in text.splitlines():
+        heading = detect_heading(line.strip())
+        if heading:
+            section_map.append((word_offset, heading))
+        word_offset += len(line.split())
+
+    cleaned = dedup_paragraphs(text)
+    chunks = _make_chunks_from_text(cleaned, "paste", section_map=section_map, page_map=None)
+    if not chunks:
+        return [], "Not enough text to index. Try a longer document."
+    return chunks, ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RETRIEVER
+# ══════════════════════════════════════════════════════════════════════════════
+
 class DocRetriever:
-    def __init__(self, chunks: List[str]):
+    def __init__(self, chunks: List[Chunk]):
         self.chunks = chunks
         self.vectorizer = TfidfVectorizer(
             ngram_range=(1, 2),
@@ -395,14 +531,12 @@ class DocRetriever:
             stop_words="english",
             sublinear_tf=True,
         )
-        self.matrix = self.vectorizer.fit_transform(chunks)
+        self.matrix = self.vectorizer.fit_transform([c.text for c in chunks])
 
-    def query(self, question: str, top_k: int = 3) -> List[Tuple[str, float]]:
+    def query(self, question: str, top_k: int = 5) -> List[Tuple[Chunk, float]]:
         q_vec = self.vectorizer.transform([question])
         scores = cosine_similarity(q_vec, self.matrix).flatten()
         top_idx = np.argsort(scores)[::-1][:top_k]
-
-        # No hard threshold: always return top_k and label match quality.
         return [(self.chunks[i], float(scores[i])) for i in top_idx]
 
     def score_sentences(self, question: str, sentences: List[str]) -> List[float]:
@@ -410,22 +544,110 @@ class DocRetriever:
             return []
         q_vec = self.vectorizer.transform([question])
         s_mat = self.vectorizer.transform(sentences)
-        s_scores = cosine_similarity(q_vec, s_mat).flatten()
-        return [float(x) for x in s_scores]
+        return list(cosine_similarity(q_vec, s_mat).flatten())
 
 
-def build_knowledge_base(text: str, source_name: str) -> str:
+# ══════════════════════════════════════════════════════════════════════════════
+# MMR + ANSWER EXTRACTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def match_label(score: float) -> Tuple[str, str]:
+    if score >= 0.25:
+        return "strong match", "match-high"
+    if score >= 0.08:
+        return "partial match", "match-medium"
+    return "weak match", "match-low"
+
+
+def select_sentences_mmr(
+    retriever: DocRetriever,
+    question: str,
+    sentences: List[str],
+    k: int = 2,
+    min_rel: float = 0.08,
+    lambda_div: float = 0.75,
+    max_chars: int = 400,
+) -> List[int]:
+    if not sentences:
+        return []
+    q_vec = retriever.vectorizer.transform([question])
+    s_mat = retriever.vectorizer.transform(sentences)
+    rel = cosine_similarity(q_vec, s_mat).flatten()
+    sim = cosine_similarity(s_mat, s_mat)
+
+    candidates = [i for i, r in enumerate(rel) if r >= min_rel]
+    if not candidates:
+        return []
+
+    selected: List[int] = []
+    total_chars = 0
+
+    while candidates and len(selected) < k and total_chars < max_chars:
+        best_i, best_score = None, -1e9
+        for i in candidates:
+            red = float(np.max(sim[i, selected])) if selected else 0.0
+            mmr = lambda_div * float(rel[i]) - (1.0 - lambda_div) * red
+            if mmr > best_score:
+                best_score, best_i = mmr, i
+        if best_i is None:
+            break
+        if selected and (total_chars + len(sentences[best_i])) > max_chars:
+            break
+        selected.append(best_i)
+        total_chars += len(sentences[best_i]) + 1
+        candidates.remove(best_i)
+
+    return sorted(selected)
+
+
+def extract_answer_sentences(
+    retriever: DocRetriever,
+    question: str,
+    results: List[Tuple[Chunk, float]],
+) -> Tuple[str, Chunk]:
     """
-    1) De-dup paragraphs (fix repeated blocks)
-    2) Chunk
-    3) Fit TF-IDF retriever and store in session state
+    Pool sentences from top chunks, run MMR selection, return answer text
+    and the source Chunk for attribution.
     """
-    cleaned = dedup_paragraphs(text)
-    chunks = chunk_text(cleaned)
+    pool: List[str] = []
+    pool_meta: List[int] = []  # which result index each sentence came from
 
+    for ri, (chunk, score) in enumerate(results[:3]):
+        for sent in split_sentences(chunk.text):
+            if not is_noise_sentence(sent):
+                cleaned = strip_latex(sent)
+                if cleaned:
+                    pool.append(cleaned)
+                    pool_meta.append(ri)
+
+    if not pool:
+        # fallback: first two sentences of best chunk
+        fallback_sents = split_sentences(results[0][0].text)[:2]
+        return " ".join(fallback_sents), results[0][0]
+
+    chosen_idx = select_sentences_mmr(retriever, question, pool, k=3, min_rel=0.06, max_chars=450)
+
+    if not chosen_idx:
+        return strip_latex(pool[0]), results[0][0]
+
+    answer = " ".join(pool[i] for i in chosen_idx)
+
+    # Attribution: use the chunk that contributed the most selected sentences
+    from collections import Counter
+    best_result_idx = Counter(pool_meta[i] for i in chosen_idx).most_common(1)[0][0]
+    source_chunk = results[best_result_idx][0]
+
+    return answer, source_chunk
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# KNOWLEDGE BASE
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_knowledge_base(chunks: List[Chunk], source_name: str) -> str:
+    """Store retriever in session state. Returns error or ''."""
     if len(chunks) < 2:
         return "Not enough text to index. Try a longer document."
-
     try:
         st.session_state.retriever = DocRetriever(chunks)
         st.session_state.source_name = source_name
@@ -435,413 +657,32 @@ def build_knowledge_base(text: str, source_name: str) -> str:
     except Exception as e:
         return f"Indexing error: {e}"
 
-_LATEX_BLOCK_RE = re.compile(r"^\s*\\\[[\s\S]*\\\]\s*$")
 
-def is_noise_sentence(s: str) -> bool:
-    s_norm = normalize_ws(s)
-    if not s_norm:
-        return True
-    # Drop pure LaTeX display blocks
-    if _LATEX_BLOCK_RE.match(s_norm):
-        return True
-    # Drop very short structural fragments
-    if len(s_norm) < 35:
-        return True
-    return False
+# ══════════════════════════════════════════════════════════════════════════════
+# STREAMING ANSWER GENERATOR
+# ══════════════════════════════════════════════════════════════════════════════
 
-
-_LATEX_LEADING_BLOCK_RE = re.compile(r"^\s*\\\[[\s\S]*?\\\]\s*")
-
-def strip_leading_display_latex(s: str) -> str:
-    if not s:
-        return ""
-    return _LATEX_LEADING_BLOCK_RE.sub("", s, count=1).strip()
-
-def select_sentences_mmr(
-    retriever: DocRetriever,
-    question: str,
-    sentences: List[str],
-    k: int = 2,
-    min_rel: float = 0.08,
-    lambda_div: float = 0.75,
-    max_chars: int = 320,
-) -> List[int]:
+def stream_answer(text: str, delay: float = 0.018):
     """
-    Maximal Marginal Relevance selection over sentences.
-
-    - maximizes relevance to question
-    - penalizes redundancy w.r.t already selected sentences
-    - returns sentence indices (in original order)
+    Word-by-word generator for st.write_stream.
+    When we add a real LLM later, this becomes a token stream from the API.
     """
-    if not sentences:
-        return []
+    words = text.split()
+    for i, word in enumerate(words):
+        yield word + (" " if i < len(words) - 1 else "")
+        time.sleep(delay)
 
-    q_vec = retriever.vectorizer.transform([question])
-    s_mat = retriever.vectorizer.transform(sentences)
 
-    rel = cosine_similarity(q_vec, s_mat).flatten()  # relevance to question
-    sim = cosine_similarity(s_mat, s_mat)            # sentence-to-sentence similarity
+# ══════════════════════════════════════════════════════════════════════════════
+# SESSION STATE
+# ══════════════════════════════════════════════════════════════════════════════
 
-    # Candidate pool: only sentences above relevance threshold
-    candidates = [i for i, r in enumerate(rel) if r >= min_rel]
-    if not candidates:
-        return []
-
-    selected: List[int] = []
-    total_chars = 0
-
-    while candidates and len(selected) < k and total_chars < max_chars:
-        best_i = None
-        best_score = -1e9
-
-        for i in candidates:
-            # redundancy: max similarity to anything already selected
-            red = 0.0
-            if selected:
-                red = float(np.max(sim[i, selected]))
-
-            mmr = lambda_div * float(rel[i]) - (1.0 - lambda_div) * red
-
-            if mmr > best_score:
-                best_score = mmr
-                best_i = i
-
-        if best_i is None:
-            break
-
-        # enforce char budget
-        sent_len = len(sentences[best_i])
-        if selected and (total_chars + 1 + sent_len) > max_chars:
-            break
-
-        selected.append(best_i)
-        total_chars += sent_len + (1 if selected else 0)
-        candidates.remove(best_i)
-
-    return sorted(set(selected))
-
-def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) -> List[str]:
-    sents = split_sentences(best_chunk)
-    if not sents:
-        return []
-
-    # filter noise first
-    filtered = []
-    idx_map = []
-    for i, s in enumerate(sents):
-        if is_noise_sentence(s):
-            continue
-        s2 = strip_leading_display_latex(s)
-        if not s2:
-            continue
-        filtered.append(s2)
-        idx_map.append(i)
-
-    if not filtered:
-        return []
-
-    # select diverse, relevant sentences
-    chosen_filtered_idx = select_sentences_mmr(
-        retriever,
-        question,
-        filtered,
-        k=2,              # keep answer tight
-        min_rel=0.08,     # tune globally
-        lambda_div=0.75,  # more relevance than diversity
-        max_chars=320,
-    )
-
-    if not chosen_filtered_idx:
-        # fallback: first filtered sentence (already stripped)
-        return [filtered[0]]
-
-    picked = [filtered[j] for j in chosen_filtered_idx]
-    picked = [x for x in picked if x]
-    return picked
-
-
-_LATEX_DISPLAY_ANYWHERE_RE = re.compile(r"\\\[[\s\S]*?\\\]")
-
-def remove_display_latex_anywhere(s: str) -> str:
-    if not s:
-        return ""
-    # Remove all display-math blocks like \[ ... \]
-    s = _LATEX_DISPLAY_ANYWHERE_RE.sub("", s)
-    # Clean up extra whitespace created by removals
-    return normalize_ws(s)
-
-def _focused_supporting_passage(
-    retriever: DocRetriever, question: str, best_chunk: str, answer_sents: List[str]
-) -> str:
-    """
-    Change #3: Answer-focused passage.
-    Build a short 'supporting passage' from the best chunk that covers the answer,
-    instead of dumping the entire chunk.
-
-    Heuristic:
-    - If we have answer sentences, include them plus up to 2 adjacent sentences each.
-    - Else include top 4 scored sentences (in order).
-    """
-    sents = split_sentences(best_chunk)
-    if not sents:
-        return best_chunk
-
-    if answer_sents:
-        # Map answer sentences back to indices (best effort via substring match)
-        idxs = set()
-        for a in answer_sents:
-            a_norm = normalize_ws(a)
-            for i, s in enumerate(sents):
-                if a_norm and a_norm in normalize_ws(s):
-                    idxs.add(i)
-                    break 
-
-        # Expand window around each found index
-        keep = set()
-        for i in idxs:
-            for j in range(max(0, i - 1), min(len(sents), i + 2)):
-                keep.add(j)
-
-        if keep:
-            out = " ".join(sents[i] for i in sorted(keep)).strip()
-            out = strip_leading_display_latex(out)
-            out = remove_display_latex_anywhere(out)
-            return out
-
-    # fallback: top scored sentences
-    scores = retriever.score_sentences(question, sents)
-    ranked = np.argsort(np.array(scores))[::-1]
-    pick = []
-    for idx in ranked:
-        if scores[idx] < 0.03:
-            continue
-        pick.append(int(idx))
-        if len(pick) >= 4:
-            break
-    if not pick:
-        text = " ".join(sents[:4]).strip()
-        out = strip_leading_display_latex(text)
-        out = remove_display_latex_anywhere(out)
-        return out
-
-    pick_sorted = sorted(set(pick))
-    out = " ".join(sents[i] for i in pick_sorted).strip()
-    out = strip_leading_display_latex(out)
-    out = remove_display_latex_anywhere(out)
-    return out
-
-
-def build_sentence_pool(results, max_chunks: int = 3):
-    """
-    results: [(chunk, score), ...]
-    returns:
-      pool_sents: list[str]
-      meta: list[(chunk_index, sent_index_in_chunk)]
-      chunks_sents: list[list[str]]  # sentence lists per chunk
-    """
-    chunks_sents = []
-    pool_sents = []
-    meta = []
-
-    for ci, (chunk, _) in enumerate(results[:max_chunks]):
-        sents = split_sentences(chunk)
-        chunks_sents.append(sents)
-        for si, s in enumerate(sents):
-            pool_sents.append(s)
-            meta.append((ci, si))
-
-    return pool_sents, meta, chunks_sents
-
-def select_pool_sentences_mmr(
-    retriever: DocRetriever,
-    question: str,
-    pool_sents: List[str],
-    k: int = 2,
-    min_rel: float = 0.08,
-    lambda_div: float = 0.75,
-    max_chars: int = 320,
-) -> List[int]:
-    # Clean and filter noise first but keep mapping
-    cleaned = []
-    idx_map = []
-
-    for i, s in enumerate(pool_sents):
-        if is_noise_sentence(s):
-            continue
-        s2 = strip_leading_display_latex(s)
-        if not s2:
-            continue
-        cleaned.append(s2)
-        idx_map.append(i)
-
-    if not cleaned:
-        return []
-
-    q_vec = retriever.vectorizer.transform([question])
-    s_mat = retriever.vectorizer.transform(cleaned)
-
-    rel = cosine_similarity(q_vec, s_mat).flatten()
-    sim = cosine_similarity(s_mat, s_mat)
-
-    candidates = [i for i, r in enumerate(rel) if r >= min_rel]
-    if not candidates:
-        return []
-
-    selected = []
-    total_chars = 0
-
-    while candidates and len(selected) < k and total_chars < max_chars:
-        best_i = None
-        best_score = -1e9
-
-        for i in candidates:
-            red = 0.0
-            if selected:
-                red = float(np.max(sim[i, selected]))
-            mmr = lambda_div * float(rel[i]) - (1.0 - lambda_div) * red
-            if mmr > best_score:
-                best_score = mmr
-                best_i = i
-
-        if best_i is None:
-            break
-
-        sent_len = len(cleaned[best_i])
-        if selected and (total_chars + 1 + sent_len) > max_chars:
-            break
-
-        selected.append(best_i)
-        total_chars += sent_len + 1
-        candidates.remove(best_i)
-
-    # Map back to original pool indices
-    pool_selected = [idx_map[i] for i in sorted(set(selected))]
-    return pool_selected
-
-def extractive_answer_from_results(retriever: DocRetriever, question: str, results, k: int = 2):
-    pool_sents, meta, _chunks_sents = build_sentence_pool(results, max_chunks=3)
-    chosen_pool_idx = select_pool_sentences_mmr(
-        retriever, question, pool_sents, k=k, min_rel=0.08, lambda_div=0.75, max_chars=320
-    )
-
-    if not chosen_pool_idx:
-        # fallback: first non-noise sentence from best chunk
-        best_chunk = results[0][0]
-        for s in split_sentences(best_chunk):
-            if not is_noise_sentence(s):
-                s2 = strip_leading_display_latex(s)
-                return [s2] if s2 else [], (0, None)
-        return [], (0, None)
-
-    picked = [strip_leading_display_latex(pool_sents[i]) for i in chosen_pool_idx]
-    picked = [x for x in picked if x]
-
-    # Figure out which chunk to use for supporting passage
-    chunk_votes = {}
-    for i in chosen_pool_idx:
-        ci, si = meta[i]
-        chunk_votes.setdefault(ci, []).append(si)
-
-    # choose chunk with most selected sentences
-    best_ci = max(chunk_votes.items(), key=lambda kv: len(kv[1]))[0]
-    return picked, (best_ci, chunk_votes[best_ci])
-
-
-def focused_supporting_from_indices(results, chunks_sents, chosen_chunk_index: int, chosen_sent_indices: List[int]):
-    sents = chunks_sents[chosen_chunk_index]
-    if not sents:
-        return ""
-
-    keep = set()
-    for i in chosen_sent_indices:
-        for j in range(max(0, i - 1), min(len(sents), i + 2)):
-            keep.add(j)
-
-    out = " ".join(sents[i] for i in sorted(keep)).strip()
-    out = strip_leading_display_latex(out)
-    out = remove_display_latex_anywhere(out)
-    return out
-
-
-def answer_question(retriever: DocRetriever, question: str) -> tuple:
-    """Returns (answer_html, raw_score, extras)."""
-    results = retriever.query(question, top_k=3)
-
-    if not results or results[0][1] < 0.01:
-        return (
-            "Nothing relevant found. Try rephrasing using specific keywords from the document.",
-            0.0,
-            [],
-        )
-
-    best_chunk, best_score = results[0]
-    label, css_class = match_label(best_score)
-
-    # --- Answer (pooled over top chunks) ---
-    pool_sents, meta, chunks_sents = build_sentence_pool(results, max_chunks=3)
-
-    answer_sents, (support_chunk_idx, support_sent_idxs) = extractive_answer_from_results(
-        retriever, question, results, k=2
-    )
-    answer_text = " ".join(answer_sents).strip()
-
-    # safe fallback if extraction returns nothing
-    if not answer_text:
-        fallback = split_sentences(best_chunk)[:2]
-        answer_text = " ".join(fallback).strip()
-
-    # --- Supporting passage ---
-    focused = ""
-    if support_sent_idxs is not None:
-        focused = focused_supporting_from_indices(
-            results, chunks_sents, support_chunk_idx, support_sent_idxs
-        )
-    else:
-        focused = _focused_supporting_passage(retriever, question, best_chunk, answer_sents)
-
-    # Ensure strings (avoid list bugs forever)
-    if isinstance(answer_text, (list, tuple)):
-        answer_text = " ".join(map(str, answer_text))
-    if isinstance(focused, (list, tuple)):
-        focused = " ".join(map(str, focused))
-
-    passages = []
-    passages.append(html.escape(f"Answer: {answer_text}"))
-
-    if focused and normalize_ws(focused) != normalize_ws(answer_text):
-        passages.append(html.escape(f"Supporting passage: {focused}"))
-
-    # --- Extras for expander (raw passages) ---
-    extras = []
-    seen = set()
-    for chunk, score in results[1:]:
-        if score < 0.01:
-            continue
-        key = normalize_ws(chunk[:200]).lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        extras.append((chunk, score))
-
-    answer_body = "</p><p>".join(passages)
-    answer_html = (
-        f'<div class="msg-label">Most relevant passage(s)</div>'
-        f"<p>{answer_body}</p>"
-        f'<span class="match-pill {css_class}">{label}</span>'
-    )
-
-    return answer_html, best_score, extras
-
-
-
-# ── Session state init ─────────────────────────────────────────────────────────
 for _key, _default in [
     ("retriever", None),
     ("source_name", None),
     ("chunk_count", 0),
     ("messages", []),
     ("source_type", "URL"),
-    # Store uploaded PDF bytes so they survive reruns
     ("pdf_bytes", None),
     ("pdf_name", ""),
 ]:
@@ -849,7 +690,10 @@ for _key, _default in [
         st.session_state[_key] = _default
 
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ══════════════════════════════════════════════════════════════════════════════
+
 with st.sidebar:
     st.markdown("## 📄 Papertrail")
     st.markdown("Load a document, then ask it anything.")
@@ -865,26 +709,24 @@ with st.sidebar:
 
     if source_type == "PDF Upload":
         uploaded = st.file_uploader("Upload PDF", type=["pdf"], label_visibility="collapsed")
-
-        # Capture bytes immediately — survives subsequent reruns
         if uploaded is not None:
-            file_bytes = uploaded.read()
-            if file_bytes:
-                st.session_state.pdf_bytes = file_bytes
+            raw_bytes = uploaded.read()
+            if raw_bytes:
+                st.session_state.pdf_bytes = raw_bytes
                 st.session_state.pdf_name = uploaded.name
 
         if st.session_state.pdf_bytes and st.button("Build Knowledge Base", key="build_pdf"):
             with st.spinner("Reading PDF..."):
-                text, err = load_pdf(st.session_state.pdf_bytes)
+                chunks, err = load_pdf(st.session_state.pdf_bytes)
             if err:
                 st.error(err)
             else:
                 with st.spinner("Indexing..."):
-                    err = build_knowledge_base(text, st.session_state.pdf_name)
+                    err = build_knowledge_base(chunks, st.session_state.pdf_name)
                 if err:
                     st.error(err)
                 else:
-                    st.session_state.pdf_bytes = None  # free memory
+                    st.session_state.pdf_bytes = None
                     st.rerun()
 
     if st.session_state.retriever:
@@ -892,29 +734,26 @@ with st.sidebar:
         st.caption(f"Active: {str(st.session_state.source_name)[:40]}")
         st.caption(f"{st.session_state.chunk_count} chunks indexed")
         if st.button("Clear & start over"):
-            st.session_state.retriever = None
-            st.session_state.source_name = None
-            st.session_state.chunk_count = 0
-            st.session_state.messages = []
-            st.session_state.pdf_bytes = None
-            st.session_state.pdf_name = ""
+            for k, v in [("retriever", None), ("source_name", None),
+                         ("chunk_count", 0), ("messages", []),
+                         ("pdf_bytes", None), ("pdf_name", "")]:
+                st.session_state[k] = v
             st.rerun()
 
 
-# ── Main area ──────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN AREA
+# ══════════════════════════════════════════════════════════════════════════════
+
 st.markdown('<div class="doc-header">Papertrail</div>', unsafe_allow_html=True)
 st.markdown('<div class="doc-sub">Ask anything from your document</div>', unsafe_allow_html=True)
 
-# URL and Paste Text inputs live here (light background = no CSS fights with sidebar)
+# URL and Paste Text inputs (main area = light bg, no CSS fights)
 if source_type == "URL":
     col1, col2 = st.columns([5, 1])
     with col1:
-        url_val = st.text_input(
-            "URL",
-            placeholder="https://example.com/article",
-            label_visibility="collapsed",
-            key="url_input",
-        )
+        url_val = st.text_input("URL", placeholder="https://example.com/article",
+                                label_visibility="collapsed", key="url_input")
     with col2:
         fetch_clicked = st.button("Fetch", use_container_width=True)
 
@@ -923,38 +762,38 @@ if source_type == "URL":
             st.warning("Enter a URL first.")
         else:
             with st.spinner("Fetching..."):
-                text, err = load_url(url_val)
+                chunks, err = load_url(url_val)
             if err:
                 st.error(err)
                 st.info("Tip: copy the page text and use Paste Text instead.")
             else:
                 with st.spinner("Indexing..."):
-                    err = build_knowledge_base(text, url_val.strip())
+                    err = build_knowledge_base(chunks, url_val.strip())
                 if err:
                     st.error(err)
                 else:
                     st.rerun()
 
 elif source_type == "Paste Text":
-    pasted = st.text_area(
-        "Paste text",
-        height=200,
-        placeholder="Paste any text here -- articles, docs, notes...",
-        label_visibility="collapsed",
-        key="paste_input",
-    )
+    pasted = st.text_area("Paste text", height=200,
+                          placeholder="Paste any text here -- articles, docs, notes...",
+                          label_visibility="collapsed", key="paste_input")
     if st.button("Build Knowledge Base", key="build_paste"):
         if not pasted.strip():
             st.warning("Paste some text first.")
         else:
             with st.spinner("Indexing..."):
-                err = build_knowledge_base(pasted.strip(), "Pasted text")
+                chunks, err = load_paste(pasted)
             if err:
                 st.error(err)
             else:
-                st.rerun()
+                err = build_knowledge_base(chunks, "Pasted text")
+                if err:
+                    st.error(err)
+                else:
+                    st.rerun()
 
-# Source badge — only shown when a KB is active
+# Source badge
 if st.session_state.retriever and st.session_state.source_name:
     src = html.escape(str(st.session_state.source_name))
     st.markdown(
@@ -967,102 +806,94 @@ if st.session_state.retriever and st.session_state.source_name:
 
 # Empty states
 if not st.session_state.retriever:
-    if source_type == "PDF Upload":
-        msg = "Upload a PDF from the sidebar to begin."
-    else:
-        msg = "Load a document above to begin."
+    msg = "Upload a PDF from the sidebar to begin." if source_type == "PDF Upload" \
+        else "Load a document above to begin."
     st.markdown(f'<div class="empty-state">{msg}</div>', unsafe_allow_html=True)
 elif not st.session_state.messages:
     st.markdown(
-        '<div class="empty-state">Knowledge base ready -- ask your first question.</div>',
+        '<div class="empty-state">Knowledge base ready — ask your first question.</div>',
         unsafe_allow_html=True,
     )
 
-
-# Display math blocks like \[ ... \]
-_LATEX_DISPLAY_RE = re.compile(r"\\\[[\s\S]*?\\\]")
-
-# Label prefixes like "common structure:" or "Key idea:" at start of a line/paragraph
-_LABEL_PREFIX_RE = re.compile(r"^\s*[A-Za-z][A-Za-z\s\-]{0,40}:\s+")
-
-# Embedded numbered section headers like "8.9 Heuristic Search" anywhere in text
-# Matches: 1.2 Title, 8.9 Heuristic Search, 10.3.1 Something
-# Matches section numbers like 8.9 or 10.3.1, then removes the following heading phrase
-# up to a boundary (newline, double space, sentence end, colon).
-_EMBEDDED_SECTION_HEADING_RE = re.compile(
-    r"""
-    \b
-    \d+(?:\.\d+)+          # section number like 8.9 or 10.3.1
-    \s+                    # whitespace
-    (?:[^\n]*[A-Za-z][^\n]*){1,80}?          # up to 80 chars of heading text (non-newline), non-greedy
-    (?=                    # stop before boundary:
-        \n                 # newline
-      | \s{2,}              # double space
-      | \s*[:\-–—]\s        # colon/dash separators
-      | \.(?:\s|$)          # sentence end
-      | $                   # end of string
-    )
-    """,
-    re.VERBOSE,
-)
-
-def clean_raw_passage(text: str) -> str:
-    if not text:
-        return ""
-
-    # Remove display math blocks
-    text = _LATEX_DISPLAY_RE.sub("", text)
-
-    # Process paragraph by paragraph to remove label prefixes reliably
-    paras = [p.strip() for p in text.split("\n") if p.strip()]
-    out_paras = []
-
-    for p in paras:
-        # Remove leading label prefix if present (e.g., "common structure: ")
-        p = _LABEL_PREFIX_RE.sub("", p)
-
-        # Remove embedded section heading titles anywhere
-        p = _EMBEDDED_SECTION_HEADING_RE.sub("", p)
-
-        # Normalize whitespace after removals
-        p = normalize_ws(p)
-
-        if p:
-            out_paras.append(p)
-
-    return "\n\n".join(out_paras).strip()
-
-# Chat history
+# ── Chat history (already answered turns) ─────────────────────────────────────
 for msg in st.session_state.messages:
     if msg["role"] == "user":
-        safe_content = html.escape(msg["content"])
-        st.markdown(f'<div class="msg-user">{safe_content}</div>', unsafe_allow_html=True)
+        safe = html.escape(msg["content"])
+        st.markdown(f'<div class="msg-user">{safe}</div>', unsafe_allow_html=True)
     else:
-        # Bot messages contain pre-built HTML (already escaped where needed)
-        st.markdown(f'<div class="msg-bot">{msg["content"]}</div>', unsafe_allow_html=True)
-        extras = msg.get("extras", [])
-        if extras:
-            with st.expander("Show raw passages"):
-                for chunk, score in extras:
-                    cleaned = clean_raw_passage(chunk)
-                    st.write(cleaned)
-
-# Question input — st.form fires only on explicit submit and clears after
-if st.session_state.retriever:
-    with st.form(key="question_form", clear_on_submit=True):
-        col1, col2 = st.columns([6, 1])
-        with col1:
-            question = st.text_input(
-                "Question",
-                placeholder="What does the document say about...?",
-                label_visibility="collapsed",
+        # Answer bubble
+        st.markdown(
+            f'<div class="msg-bot">'
+            f'<div class="msg-label">Most relevant passage</div>'
+            f'{html.escape(msg["content"])}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        # Attribution bar beneath the bubble
+        attr = msg.get("attribution", "")
+        match_cls = msg.get("match_css", "match-low")
+        match_lbl = msg.get("match_label", "")
+        if attr or match_lbl:
+            parts = []
+            if attr:
+                parts.append(f'<span class="attr-section">{html.escape(attr)}</span>')
+            if match_lbl:
+                parts.append(f'<span class="match-pill {match_cls}">{match_lbl}</span>')
+            st.markdown(
+                f'<div class="attribution-bar">{"".join(parts)}</div>',
+                unsafe_allow_html=True,
             )
-        with col2:
-            submitted = st.form_submit_button("Ask", use_container_width=True)
 
-    if submitted and question.strip():
+# ── Live answer (streaming) ────────────────────────────────────────────────────
+if st.session_state.retriever:
+    question = st.chat_input("Ask a question about your document...")
+
+    if question and question.strip():
         q = question.strip()
-        answer_html, score, extras = answer_question(st.session_state.retriever, q)
+
+        # Show user message immediately
+        safe_q = html.escape(q)
+        st.markdown(f'<div class="msg-user">{safe_q}</div>', unsafe_allow_html=True)
+
+        # Retrieve + extract
+        results = st.session_state.retriever.query(q, top_k=5)
+
+        if not results or results[0][1] < 0.01:
+            answer_text = "Nothing relevant found. Try rephrasing using keywords from the document."
+            source_chunk = None
+            score = 0.0
+        else:
+            answer_text, source_chunk = extract_answer_sentences(
+                st.session_state.retriever, q, results
+            )
+            score = results[0][1]
+
+        label, css_class = match_label(score)
+        attribution = source_chunk.attribution_label() if source_chunk else ""
+
+        # Stream the answer into a bot bubble
+        with st.container():
+            st.markdown('<div class="msg-bot"><div class="msg-label">Most relevant passage</div>', unsafe_allow_html=True)
+            st.write_stream(stream_answer(answer_text))
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # Attribution bar
+        if attribution or label:
+            parts = []
+            if attribution:
+                parts.append(f'<span class="attr-section">{html.escape(attribution)}</span>')
+            parts.append(f'<span class="match-pill {css_class}">{label}</span>')
+            st.markdown(
+                f'<div class="attribution-bar">{"".join(parts)}</div>',
+                unsafe_allow_html=True,
+            )
+
+        # Persist to history
         st.session_state.messages.append({"role": "user", "content": q})
-        st.session_state.messages.append({"role": "assistant", "content": answer_html, "extras": extras})
-        st.rerun()
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": answer_text,
+            "attribution": attribution,
+            "match_label": label,
+            "match_css": css_class,
+        })

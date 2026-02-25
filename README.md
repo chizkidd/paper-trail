@@ -134,5 +134,3 @@ The model should answer from your document, not from its training data.
 
 Every answer is grounded in retrieved evidence.
 
-```
-```

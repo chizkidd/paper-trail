@@ -639,11 +639,11 @@ def select_sentences_mmr(
     if not sentences:
         return []
 
-    q_vec = retriever.vectorizer.transform([question])
-    s_mat = retriever.vectorizer.transform(sentences)
+    q_emb = retriever.embedder.encode([question], normalize_embeddings=True)
+    s_emb = retriever.embedder.encode(sentences, normalize_embeddings=True)
 
-    rel = cosine_similarity(q_vec, s_mat).flatten()
-    sim = cosine_similarity(s_mat, s_mat)
+    rel = np.dot(s_emb, q_emb[0])       # cosine (normalized)
+    sim = np.dot(s_emb, s_emb.T)        # pairwise cosine for MMR diversity
 
     candidates = [i for i, r in enumerate(rel) if r >= min_rel]
     if not candidates:
@@ -697,7 +697,7 @@ def _extractive_answer(retriever: DocRetriever, question: str, best_chunk: str) 
 
     chosen_filtered_idx = select_sentences_mmr(
         retriever, question, filtered,
-        k=4, min_rel=0.06, lambda_div=0.70, max_chars=900,
+        k=4, min_rel=0.25, lambda_div=0.70, max_chars=900,
     )
 
     if not chosen_filtered_idx:
@@ -752,11 +752,11 @@ def select_pool_sentences_mmr(
     if not cleaned:
         return []
 
-    q_vec = retriever.vectorizer.transform([question])
-    s_mat = retriever.vectorizer.transform(cleaned)
+    q_emb = retriever.embedder.encode([question], normalize_embeddings=True)
+    s_emb = retriever.embedder.encode(cleaned, normalize_embeddings=True)
 
-    rel = cosine_similarity(q_vec, s_mat).flatten()
-    sim = cosine_similarity(s_mat, s_mat)
+    rel = np.dot(s_emb, q_emb[0])       # cosine (normalized)
+    sim = np.dot(s_emb, s_emb.T)        # pairwise cosine for MMR diversity
 
     candidates = [i for i, r in enumerate(rel) if r >= min_rel]
     if not candidates:
@@ -795,7 +795,7 @@ def extractive_answer_from_results(retriever: DocRetriever, question: str, resul
     pool_sents, meta, chunks_sents = build_sentence_pool(results, max_chunks=3)
     chosen_pool_idx = select_pool_sentences_mmr(
         retriever, question, pool_sents,
-        k=4, min_rel=0.06, lambda_div=0.70, max_chars=900,
+        k=4, min_rel=0.25, lambda_div=0.70, max_chars=900,
     )
 
     if not chosen_pool_idx:

@@ -278,7 +278,7 @@ def dedup_paragraphs(text: str) -> str:
     return "\n".join(out).strip()
 
 
-def chunk_text(text: str, chunk_size: int = 150, overlap: int = 40) -> List[str]:
+def chunk_text(text: str, chunk_size: int = 220, overlap: int = 30) -> List[str]:
     paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
     chunks: List[str] = []
     current_words: List[str] = []
@@ -287,18 +287,18 @@ def chunk_text(text: str, chunk_size: int = 150, overlap: int = 40) -> List[str]
         para_words = para.split()
         if current_words and len(current_words) + len(para_words) > chunk_size:
             chunk = " ".join(current_words)
-            if len(current_words) >= 10:
+            if len(current_words) >= 20:
                 chunks.append(chunk)
             current_words = current_words[-overlap:] + para_words
         else:
             current_words.extend(para_words)
         while len(current_words) > chunk_size * 1.5:
             chunk = " ".join(current_words[:chunk_size])
-            if len(chunk.strip()) >= 10:
+            if len(chunk.strip()) >= 20:
                 chunks.append(chunk)
             current_words = current_words[chunk_size - overlap:]
 
-    if len(current_words) >= 10:
+    if len(current_words) >= 20:
         chunks.append(" ".join(current_words))
 
     return chunks
@@ -413,14 +413,18 @@ def load_embedder():
 class DocRetriever:
     def __init__(self, chunks: List[str],
                  chunk_sections: Optional[List[str]] = None,
-                 chunk_pages: Optional[List[Optional[int]]] = None):
+                 chunk_pages: Optional[List[Optional[int]]] = None,
+                 embed_chunks: Optional[List[str]] = None):
         self.chunks = chunks
         self.chunk_sections = chunk_sections or [""] * len(chunks)
         self.chunk_pages    = chunk_pages    or [None] * len(chunks)
 
+        # Use header-prefixed text for indexing if provided; display text stays as-is
+        texts_to_embed = embed_chunks if embed_chunks is not None else chunks
+
         # Dense
         self.embedder = load_embedder()
-        self.embeddings = self.embedder.encode(chunks, normalize_embeddings=True)
+        self.embeddings = self.embedder.encode(texts_to_embed, normalize_embeddings=True)
 
         # Sparse (still useful for sentence scoring + exact matches)
         self.vectorizer = TfidfVectorizer(
@@ -429,7 +433,7 @@ class DocRetriever:
             stop_words="english",
             sublinear_tf=True,
         )
-        self.matrix = self.vectorizer.fit_transform(chunks)
+        self.matrix = self.vectorizer.fit_transform(texts_to_embed)
 
     def query(self, question: str, top_k: int = 20, alpha: float = 0.65) -> List[Tuple[str, float, int]]:
         """
@@ -500,7 +504,11 @@ def build_knowledge_base(text: str, source_name: str,
     chunk_pages    = [resolve(page_map,    i)     for i in range(len(raw_chunks))]
 
     try:
-        st.session_state.retriever = DocRetriever(raw_chunks, chunk_sections, chunk_pages)
+        embed_chunks = [
+            f"{sec}. {chunk}" if sec else chunk
+            for chunk, sec in zip(raw_chunks, chunk_sections)
+        ]
+        st.session_state.retriever = DocRetriever(raw_chunks, chunk_sections, chunk_pages, embed_chunks)
         st.session_state.source_name = source_name
         st.session_state.chunk_count = len(raw_chunks)
         st.session_state.messages = []
@@ -542,8 +550,11 @@ def generate_answer_hf(question: str, context: str) -> Tuple[str, bool]:
     if not URL_SUPPORT:
         return "", False
     prompt = (
-        f"Answer the question using only the context below. Be concise.\n\n"
-        f"Context: {context[:1200]}\n\nQuestion: {question}\n\nAnswer:"
+        f"Answer the question based only on the context below. "
+        f"If the context does not contain the answer, say \"I cannot determine this from the document.\"\n\n"
+        f"Context: {context}\n\n"
+        f"Question: {question}\n\n"
+        f"Answer:"
     )
     headers = {"Content-Type": "application/json"}
     if HF_TOKEN:
@@ -555,10 +566,10 @@ def generate_answer_hf(question: str, context: str) -> Tuple[str, bool]:
             json={
                 "inputs": prompt,
                 "parameters": {
-                    "max_new_tokens": 320,      # was 150
-                    "min_new_tokens": 120,      # encourage length
-                    "temperature": 0.3,
-                    "do_sample": True,
+                    "max_new_tokens": 300,
+                    "min_new_tokens": 20,
+                    "temperature": 0.2,
+                    "do_sample": False,
                     "return_full_text": False,
                 }
             },
@@ -573,6 +584,14 @@ def generate_answer_hf(question: str, context: str) -> Tuple[str, bool]:
             if "Answer:" in answer:
                 answer = answer.split("Answer:")[-1].strip()
             if answer and len(answer) > 5:
+                # Quality gate: reject degenerate outputs
+                words = answer.split()
+                if len(words) >= 4:
+                    from collections import Counter
+                    freq = Counter(w.lower() for w in words)
+                    if freq.most_common(1)[0][1] / len(words) > 0.40:
+                        return "", False  # repetition loop — fall back to extractive
+                answer = answer.rstrip(", ;(").strip()
                 return answer, True
         return "", False
     except Exception:
@@ -845,7 +864,9 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
               -> section attribution
     Returns: (answer_html, answer_text, score, extras, attribution_html)
     """
-    candidates = retriever.query(question, top_k=20)
+    n_chunks = len(retriever.chunks)
+    dynamic_top_k = min(40, max(20, n_chunks // 5))
+    candidates = retriever.query(question, top_k=dynamic_top_k)
     reranked   = rerank(question, candidates, top_k=5)
 
     if not reranked or reranked[0][1] < 0.01:
@@ -866,7 +887,7 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         extractive_text = " ".join(split_sentences(best_chunk)[:2]).strip()
     extractive_text = as_text(extractive_text)
 
-    context_pack = build_context_pack(retriever, reranked, max_chunks=5, max_chars=2600)
+    context_pack = build_context_pack(retriever, reranked, max_chunks=5, max_chars=1800)
     generated, is_generated = generate_answer_hf(question, context_pack)
 
     answer_text = generated if is_generated else extractive_text

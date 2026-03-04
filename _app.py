@@ -30,10 +30,6 @@ try:
 except ImportError:
     URL_SUPPORT = False
 
-
-# Alias for clarity: generation support depends on requests
-HF_SUPPORT = URL_SUPPORT
-
 try:
     import pdfplumber
     PDF_SUPPORT = True
@@ -549,44 +545,20 @@ def rerank(question: str, candidates: List[Tuple[str, float, int]], top_k: int =
 
 # ── HuggingFace flan-t5 generation ────────────────────────────────────────────
 
-def evidence_overlap_ratio(answer: str, evidence: str) -> float:
-    a = re.findall(r"[a-zA-Z]{4,}", (answer or "").lower())
-    e = set(re.findall(r"[a-zA-Z]{4,}", (evidence or "").lower()))
-    if not a:
-        return 0.0
-    hit = sum(1 for w in a if w in e)
-    return hit / max(1, len(a))
-
-
 def generate_answer_hf(question: str, context: str) -> Tuple[str, bool]:
     """Returns (answer, is_generated). Falls back silently on cold start/error."""
-    if not HF_SUPPORT:
+    if not URL_SUPPORT:
         return "", False
-
-    prompt = f"""
-You are a careful assistant. Answer the QUESTION using ONLY the EVIDENCE.
-If the evidence is insufficient, say: "I cannot determine this from the document."
-
-Rules:
-- Write a direct answer first (1 to 3 sentences).
-- Then add "Details" as bullet points if helpful.
-- Every factual claim must include a citation in parentheses using the evidence tag,
-  for example: (§ Methods  ·  p. 3) or (Chunk: 12).
-- Do not invent citations. Do not use outside knowledge.
-
-EVIDENCE:
-{context}
-
-QUESTION:
-{question}
-
-ANSWER:
-""".strip()
-
+    prompt = (
+        f"Answer the question based only on the context below. "
+        f"If the context does not contain the answer, say \"I cannot determine this from the document.\"\n\n"
+        f"Context: {context}\n\n"
+        f"Question: {question}\n\n"
+        f"Answer:"
+    )
     headers = {"Content-Type": "application/json"}
     if HF_TOKEN:
         headers["Authorization"] = f"Bearer {HF_TOKEN}"
-
     try:
         resp = requests.post(
             HF_API_URL,
@@ -609,67 +581,19 @@ ANSWER:
         data = resp.json()
         if isinstance(data, list) and data and "generated_text" in data[0]:
             answer = data[0]["generated_text"].strip()
-            if "ANSWER:" in answer:
-                answer = answer.split("ANSWER:")[-1].strip()
             if "Answer:" in answer:
                 answer = answer.split("Answer:")[-1].strip()
-
-            if not answer or len(answer) <= 5:
-                return "", False
-
-            # Quality gate: reject degenerate outputs
-            words = answer.split()
-            if len(words) >= 4:
-                from collections import Counter
-                freq = Counter(w.lower() for w in words)
-                if freq.most_common(1)[0][1] / len(words) > 0.40:
-                    return "", False  # repetition loop — fall back
-
-            answer = answer.rstrip(", ;(").strip()
-
-            # Grounding gate: reject fluent text that does not overlap evidence
-            if evidence_overlap_ratio(answer, context) < 0.18:
-                return "", False
-
-            return answer, True
-
+            if answer and len(answer) > 5:
+                # Quality gate: reject degenerate outputs
+                words = answer.split()
+                if len(words) >= 4:
+                    from collections import Counter
+                    freq = Counter(w.lower() for w in words)
+                    if freq.most_common(1)[0][1] / len(words) > 0.40:
+                        return "", False  # repetition loop — fall back to extractive
+                answer = answer.rstrip(", ;(").strip()
+                return answer, True
         return "", False
-    except Exception:
-        return "", False
-
-
-def generate_answer_ollama(question: str, evidence: str, model: str = "llama3.1:8b") -> Tuple[str, bool]:
-    """Local, free generation via Ollama (http://localhost:11434)."""
-    if not URL_SUPPORT:
-        return "", False
-
-    prompt = f"""
-You are a careful assistant. Use ONLY the evidence. Cite every claim using the bracket tags.
-If insufficient, say: "I cannot determine this from the document."
-
-EVIDENCE:
-{evidence}
-
-QUESTION:
-{question}
-
-ANSWER:
-""".strip()
-
-    try:
-        resp = requests.post(
-            "http://localhost:11434/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=60,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        text = (data.get("response") or "").strip()
-        if len(text) < 10:
-            return "", False
-        if evidence_overlap_ratio(text, evidence) < 0.12:
-            return "", False
-        return text, True
     except Exception:
         return "", False
 
@@ -933,84 +857,10 @@ def build_context_pack(
     return "\n\n".join(parts).strip()
 
 
-def build_evidence_pack(
-    retriever: DocRetriever,
-    reranked: List[Tuple[str, float, int]],
-    question: str,
-    max_chunks: int = 4,
-    max_sents_per_chunk: int = 2,
-    max_chars: int = 1400,
-) -> str:
-    """
-    Build a compact evidence list of the most question-relevant sentences,
-    each prefixed with an attribution tag for citation.
-    """
-    lines: List[str] = []
-    total = 0
-
-    q_emb = retriever.embedder.encode([question], normalize_embeddings=True)
-
-    for chunk, score, idx in reranked[:max_chunks]:
-        if score < 0.01:
-            continue
-
-        attr = retriever.get_attribution(idx) or f"Chunk: {idx}"
-        sents = [s for s in split_sentences(chunk) if not is_noise_sentence(s)]
-        if not sents:
-            continue
-
-        s_emb = retriever.embedder.encode(sents, normalize_embeddings=True)
-        rel = np.dot(s_emb, q_emb[0])
-        order = np.argsort(rel)[::-1][:max_sents_per_chunk]
-
-        for j in order:
-            sent = remove_display_latex_anywhere(as_text(sents[int(j)]))
-            if not sent:
-                continue
-            line = f"[{attr}] {sent}"
-            if total + len(line) + 1 > max_chars:
-                return "\n".join(lines).strip()
-            lines.append(line)
-            total += len(line) + 1
-
-    return "\n".join(lines).strip()
-
-
-def format_extractive_answer(answer_sents: List[str], attr_text: str) -> str:
-    core = remove_display_latex_anywhere(" ".join([as_text(s) for s in (answer_sents or []) if s]).strip())
-    if not core:
-        core = "I cannot determine this from the document."
-    if attr_text:
-        return f"{core}\n\nEvidence: ({attr_text})"
-    return core
-
-
-def _focused_supporting_passage(
-    retriever: DocRetriever,
-    question: str,
-    best_chunk: str,
-    answer_sents: List[str],
-) -> str:
-    """Fallback supporting passage when pooled sentence indices are unavailable."""
-    if answer_sents:
-        return " ".join(answer_sents).strip()
-    # fall back to top few non-noise sentences from best chunk
-    sents = []
-    for s in split_sentences(best_chunk):
-        if is_noise_sentence(s):
-            continue
-        s2 = strip_leading_display_latex(s)
-        if s2:
-            sents.append(s2)
-        if len(sents) >= 3:
-            break
-    return " ".join(sents).strip()
-
-
 def answer_question(retriever: DocRetriever, question: str) -> tuple:
     """
     Pipeline: TF-IDF (top-20) -> cross-encoder rerank (top-5)
-              -> MMR extraction -> optional generation (falls back to grounded extractive)
+              -> MMR extraction -> HF generation (falls back to extractive)
               -> section attribution
     Returns: (answer_html, answer_text, score, extras, attribution_html)
     """
@@ -1026,41 +876,23 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
     best_chunk, best_score, best_idx = reranked[0]
     label, css_class = match_label(best_score)
 
-    # Attribution (used by both generated and extractive modes)
-    attr_text = retriever.get_attribution(best_idx)
-
     results_for_mmr = [(c, s) for c, s, _ in reranked]
     _, _, chunks_sents = build_sentence_pool(results_for_mmr, max_chunks=3)
 
     answer_sents, (sup_ci, sup_si) = extractive_answer_from_results(
         retriever, question, results_for_mmr, k=2
     )
+    extractive_text = remove_display_latex_anywhere(" ".join(answer_sents).strip())
+    if not extractive_text:
+        extractive_text = " ".join(split_sentences(best_chunk)[:2]).strip()
+    extractive_text = as_text(extractive_text)
 
-    # Evidence pack for generation (more compact than raw chunks)
-    evidence_pack = build_evidence_pack(
-        retriever, reranked, question,
-        max_chunks=4, max_sents_per_chunk=2, max_chars=1400,
-    )
+    context_pack = build_context_pack(retriever, reranked, max_chunks=5, max_chars=1800)
+    generated, is_generated = generate_answer_hf(question, context_pack)
 
-    mode = st.session_state.get("answer_mode", "Hugging Face (best effort)")
-
-    generated = ""
-    is_generated = False
-    if mode == "Local (Ollama)":
-        generated, is_generated = generate_answer_ollama(question, evidence_pack)
-    elif mode == "Hugging Face (best effort)":
-        generated, is_generated = generate_answer_hf(question, evidence_pack)
-    else:
-        # Structured (no LLM)
-        generated, is_generated = "", False
-
-    if is_generated:
-        answer_text = remove_display_latex_anywhere(as_text(generated))
-        source_label = "generated answer"
-    else:
-        answer_text = format_extractive_answer(answer_sents, attr_text)
-        answer_text = remove_display_latex_anywhere(as_text(answer_text))
-        source_label = "grounded answer"
+    answer_text = generated if is_generated else extractive_text
+    answer_text = remove_display_latex_anywhere(as_text(answer_text))
+    source_label = "generated answer" if is_generated else "extracted passage"
 
     # Supporting passage (single block, with fallback)
     if sup_si is not None:
@@ -1069,6 +901,8 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         focused = _focused_supporting_passage(retriever, question, best_chunk, answer_sents)
     focused = remove_display_latex_anywhere(as_text(focused))
 
+    # Attribution
+    attr_text = retriever.get_attribution(best_idx)
     attribution_html = ""
     if attr_text:
         attribution_html = (
@@ -1109,7 +943,6 @@ for _key, _default in [
     ("chunk_count", 0),
     ("messages", []),
     ("source_type", "URL"),
-    ("answer_mode", "Hugging Face (best effort)"),
     ("pdf_bytes", None),
     ("pdf_name", ""),
 ]:
@@ -1158,13 +991,6 @@ with st.sidebar:
         st.markdown("---")
         st.caption(f"Active: {str(st.session_state.source_name)[:40]}")
         st.caption(f"{st.session_state.chunk_count} chunks indexed")
-
-        st.session_state.answer_mode = st.selectbox(
-            "Answer mode",
-            ["Structured (no LLM)", "Local (Ollama)", "Hugging Face (best effort)"],
-            index=["Structured (no LLM)", "Local (Ollama)", "Hugging Face (best effort)"].index(st.session_state.answer_mode),
-        )
-
         if st.button("Clear & start over"):
             st.session_state.retriever = None
             st.session_state.source_name = None

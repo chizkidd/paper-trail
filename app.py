@@ -2,10 +2,13 @@ import html
 import io
 import re
 import time
-from typing import List, Tuple, Optional, Dict
-from typing import Any
+from typing import List, Tuple, Optional, Dict, Any
 
-import fitz  # PyMuPDF
+
+try:
+    import fitz  # PyMuPDF (common import name)
+except Exception:
+    import pymupdf as fitz  # fallback for environments without 'fitz'
 import unicodedata
 
 
@@ -331,68 +334,118 @@ def split_sentences(text: str) -> List[str]:
 # ── Source loaders ─────────────────────────────────────────────────────────────
 
 
-def normalize_pdf_text(text: str) -> str:
-    text = unicodedata.normalize("NFKC", text)
-    text = text.replace("\u00A0", " ")
-    text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
-    text = re.sub(r"[ \t]*\n[ \t]*", " ", text)
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    text = re.sub(r"([A-Za-z])(\d)", r"\1 \2", text)
-    text = re.sub(r"(\d)([A-Za-z])", r"\1 \2", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
-def looks_scanned(page_text: str, min_chars: int = 40) -> bool:
-    # Heuristic: if almost no extracted text, probably scanned image page
-    return len(page_text.strip()) < min_chars
-
-
-def extract_page_text_blocks(page: "fitz.Page") -> str:
-    # Blocks: (x0, y0, x1, y1, text, block_no, block_type)
-    blocks = page.get_text("blocks")
-    blocks = sorted(blocks, key=lambda b: (round(b[1], 1), round(b[0], 1)))
-    text = " ".join(b[4].strip() for b in blocks if b[4] and b[4].strip())
-    return text
-
-
-def load_pdf(pdf_bytes: bytes):
+def load_pdf(file_bytes: bytes) -> Tuple[str, dict, dict, str]:
     """
-    Robust PDF loader:
-    - primary: get_text("text")
-    - fallback: get_text("blocks") for better order on multi-column layouts
-    - detection: scanned pages (no text) are kept as empty strings (or you can skip/warn)
-    Returns list of (page_number_1indexed, page_text).
+    Returns:
+      text: full extracted text
+      section_map: {para_idx: heading_text}
+      page_map: {para_idx: page_number}
+      err: "" on success else error message
     """
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    pages = []
+    # PyMuPDF import (robust across environments)
+    try:
+        import fitz  # type: ignore
+    except Exception:
+        try:
+            import pymupdf as fitz  # type: ignore
+        except Exception:
+            return "", {}, {}, "PyMuPDF not installed. Add 'pymupdf' to requirements.txt."
 
-    for i in range(doc.page_count):
-        page = doc.load_page(i)
+    import re
+    import unicodedata
 
-        # Primary extraction
-        text = page.get_text("text") or ""
-        text = normalize_pdf_text(text)
+    # Heading-ish detector (keep your original spirit)
+    _hre = re.compile(r"^(?:\d+[\d\.]*\s+)?[A-Z][^\n]{0,80}$")
 
-        # If too little text, try blocks fallback
-        if looks_scanned(text):
-            alt = extract_page_text_blocks(page)
-            alt = normalize_pdf_text(alt)
-            # Use blocks if it improved
-            if len(alt) > len(text):
-                text = alt
+    def normalize_preserve_newlines(text: str) -> str:
+        """
+        Fix spacing artifacts but preserve newlines so we can build para_idx maps.
+        """
+        text = unicodedata.normalize("NFKC", text)
+        text = text.replace("\u00A0", " ")
 
-        # If still scanned-like, you can:
-        # - keep empty (downstream retrieval will ignore it)
-        # - OR store a marker string
-        # - OR trigger OCR (not included here)
-        if looks_scanned(text):
-            # Keep as empty so it won't pollute retrieval with junk
-            text = ""
+        # Fix hyphenation across line breaks: "extensi-\n bility" -> "extensibility"
+        text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
 
-        pages.append((i + 1, text))
+        # Process per line to preserve structure
+        out_lines = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                out_lines.append("")
+                continue
 
-    return pages
+            # add spaces between lower->Upper and letters<->numbers
+            line = re.sub(r"([a-z])([A-Z])", r"\1 \2", line)
+            line = re.sub(r"([A-Za-z])(\d)", r"\1 \2", line)
+            line = re.sub(r"(\d)([A-Za-z])", r"\1 \2", line)
+
+            # collapse internal whitespace
+            line = re.sub(r"\s+", " ", line).strip()
+            out_lines.append(line)
+
+        return "\n".join(out_lines).strip()
+
+    def looks_scanned(page_text: str, min_chars: int = 40) -> bool:
+        return len(page_text.strip()) < min_chars
+
+    def extract_blocks(page) -> str:
+        # blocks: (x0, y0, x1, y1, text, block_no, block_type)
+        blocks = page.get_text("blocks") or []
+        blocks = sorted(blocks, key=lambda b: (round(b[1], 1), round(b[0], 1)))
+        parts = []
+        for b in blocks:
+            t = (b[4] or "").strip()
+            if t:
+                parts.append(t)
+        return "\n".join(parts)
+
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+
+        pages_text = []
+        section_map: dict = {}
+        page_map: dict = {}
+        para_idx = 0
+
+        for page_num in range(1, doc.page_count + 1):
+            page = doc.load_page(page_num - 1)
+
+            # Primary extraction
+            raw = page.get_text("text") or ""
+            raw = normalize_preserve_newlines(raw)
+
+            # Fallback: blocks extraction if text is empty/scrambled
+            if looks_scanned(raw):
+                alt = extract_blocks(page)
+                alt = normalize_preserve_newlines(alt)
+                if len(alt) > len(raw):
+                    raw = alt
+
+            # If still scanned-like, keep empty (do not pollute retrieval)
+            if looks_scanned(raw):
+                raw = ""
+
+            # Build maps using para_idx aligned to non-empty lines (like your old code)
+            page_map[para_idx] = page_num
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if _hre.match(line) and not line.endswith(".") and len(line) < 80:
+                    section_map[para_idx] = line
+                para_idx += 1
+
+            pages_text.append(raw)
+
+        text = "\n\n".join([p for p in pages_text if p]).strip()
+        if not text:
+            return "", {}, {}, "PDF parsed but no usable text found. It may be scanned/image-only."
+
+        return text, section_map, page_map, ""
+
+    except Exception as e:
+        return "", {}, {}, f"PDF parse error: {e}"
 
 
 def load_url(url: str) -> Tuple[str, dict, str]:

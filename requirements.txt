@@ -8,3 +8,5 @@ beautifulsoup4>=4.12.0
 # embeddings
 torch>=2.1.0
 sentence-transformers>=2.7.0,<3.0.0
+
+pymupdf

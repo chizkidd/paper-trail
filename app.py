@@ -5,6 +5,10 @@ import time
 from typing import List, Tuple, Optional, Dict
 from typing import Any
 
+import fitz  # PyMuPDF
+import unicodedata
+
+
 import numpy as np
 import streamlit as st
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -325,31 +329,70 @@ def split_sentences(text: str) -> List[str]:
 
 
 # ── Source loaders ─────────────────────────────────────────────────────────────
-def load_pdf(file_bytes: bytes) -> Tuple[str, dict, dict, str]:
-    if not PDF_SUPPORT:
-        return "", {}, {}, "pdfplumber not installed. Add it to requirements.txt."
-    try:
-        pages_text, section_map, page_map = [], {}, {}
-        para_idx = 0
-        _hre = re.compile(r"^(?:\d+[\d\.]*\s+)?[A-Z][^\n]{0,80}$")
-        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            for page_num, page in enumerate(pdf.pages, start=1):
-                raw = page.extract_text() or ""
-                page_map[para_idx] = page_num
-                for line in raw.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    if _hre.match(line) and not line.endswith(".") and len(line) < 80:
-                        section_map[para_idx] = line
-                    para_idx += 1
-                pages_text.append(raw)
-        text = "\n\n".join(pages_text).strip()
-        if not text:
-            return "", {}, {}, "PDF parsed but no text found. It may be a scanned/image-only PDF."
-        return text, section_map, page_map, ""
-    except Exception as e:
-        return "", {}, {}, f"PDF parse error: {e}"
+
+
+def normalize_pdf_text(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace("\u00A0", " ")
+    text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
+    text = re.sub(r"[ \t]*\n[ \t]*", " ", text)
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    text = re.sub(r"([A-Za-z])(\d)", r"\1 \2", text)
+    text = re.sub(r"(\d)([A-Za-z])", r"\1 \2", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def looks_scanned(page_text: str, min_chars: int = 40) -> bool:
+    # Heuristic: if almost no extracted text, probably scanned image page
+    return len(page_text.strip()) < min_chars
+
+
+def extract_page_text_blocks(page: "fitz.Page") -> str:
+    # Blocks: (x0, y0, x1, y1, text, block_no, block_type)
+    blocks = page.get_text("blocks")
+    blocks = sorted(blocks, key=lambda b: (round(b[1], 1), round(b[0], 1)))
+    text = " ".join(b[4].strip() for b in blocks if b[4] and b[4].strip())
+    return text
+
+
+def load_pdf(pdf_bytes: bytes):
+    """
+    Robust PDF loader:
+    - primary: get_text("text")
+    - fallback: get_text("blocks") for better order on multi-column layouts
+    - detection: scanned pages (no text) are kept as empty strings (or you can skip/warn)
+    Returns list of (page_number_1indexed, page_text).
+    """
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pages = []
+
+    for i in range(doc.page_count):
+        page = doc.load_page(i)
+
+        # Primary extraction
+        text = page.get_text("text") or ""
+        text = normalize_pdf_text(text)
+
+        # If too little text, try blocks fallback
+        if looks_scanned(text):
+            alt = extract_page_text_blocks(page)
+            alt = normalize_pdf_text(alt)
+            # Use blocks if it improved
+            if len(alt) > len(text):
+                text = alt
+
+        # If still scanned-like, you can:
+        # - keep empty (downstream retrieval will ignore it)
+        # - OR store a marker string
+        # - OR trigger OCR (not included here)
+        if looks_scanned(text):
+            # Keep as empty so it won't pollute retrieval with junk
+            text = ""
+
+        pages.append((i + 1, text))
+
+    return pages
 
 
 def load_url(url: str) -> Tuple[str, dict, str]:

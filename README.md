@@ -119,7 +119,7 @@ Maximal Marginal Relevance (MMR) selects a diverse set of high-relevance sentenc
 
 Papertrail supports three answer modes.
 
-### Structured (no LLM)
+### (a) Structured (no LLM)
 
 Produces a grounded extractive answer directly from the document. This mode guarantees:
 
@@ -127,9 +127,7 @@ Produces a grounded extractive answer directly from the document. This mode guar
 * deterministic behavior
 * complete grounding in the source text
 
----
-
-### Local (Ollama)
+### (b) Local (Ollama)
 
 Uses a local LLM to synthesize an answer from retrieved evidence.
 
@@ -151,9 +149,7 @@ Then pull a model:
 ollama pull llama3
 ```
 
----
-
-### Hugging Face (best effort)
+### (c) Hugging Face (best effort)
 
 Uses serverless inference for generation when available.
 

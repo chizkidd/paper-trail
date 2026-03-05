@@ -1453,12 +1453,16 @@ if st.session_state.retriever:
             unsafe_allow_html=True
         )
 
+        answer_html, answer_text, score, extras, attribution_html = answer_question(
+            st.session_state.retriever, q
+        )
+
         typing_ph.empty()
 
-        with st.spinner("Thinking..."):
-            answer_html, answer_text, score, extras, attribution_html = answer_question(
-                st.session_state.retriever, q
-            )
+        # with st.spinner("Thinking..."):
+        #     answer_html, answer_text, score, extras, attribution_html = answer_question(
+        #         st.session_state.retriever, q
+        #     )
 
         # Stream the plain-text answer word by word into a bot bubble
         source_label = "assistant"  
@@ -1484,3 +1488,16 @@ if st.session_state.retriever:
             "attribution_html": attribution_html,
             "answer_text": answer_text,
         })
+
+        # Auto-scroll to newest message
+        st.markdown(
+        """
+        <script>
+        window.scrollTo({
+            top: document.body.scrollHeight,
+            behavior: 'smooth'
+        });
+        </script>
+        """,
+        unsafe_allow_html=True
+        )

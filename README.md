@@ -2,11 +2,7 @@
 
 Ask questions. Get grounded answers from any document you bring.
 
-Papertrail is a lightweight **document question-answering agent** built with Streamlit.  
-It indexes a document, retrieves relevant evidence, and produces grounded answers with clear attribution.
-
-No hidden training data.  
-Every answer is derived from the document you load.
+Papertrail is a lightweight **document question-answering agent** built with Streamlit. It indexes a document, retrieves relevant evidence, and produces grounded answers with clear attribution. No hidden training data. Every answer is derived from the document you load.
 
 ---
 

@@ -2,75 +2,190 @@
 
 Ask questions. Get grounded answers from any document you bring.
 
-Papertrail is a simple document Q&A agent built with Streamlit. It indexes your document, retrieves relevant evidence, and generates grounded answers with clear attribution.
+Papertrail is a lightweight **document question-answering agent** built with Streamlit.  
+It indexes a document, retrieves relevant evidence, and produces grounded answers with clear attribution.
 
-No hardcoded knowledge base. No hidden training data. Every answer is derived from your document.
+No hidden training data.  
+Every answer is derived from the document you load.
 
 ---
 
-## What it does
+## Features
 
-- **PDF upload:** Extracts text using `pdfplumber`
-- **URL input:** Scrapes webpage content
-- **Paste text:** Direct raw text input
-- Splits content into overlapping chunks
+- **PDF Upload**: robust text extraction using PyMuPDF
+- **URL Input**: scrape and index webpage content
+- **Paste Text**: index arbitrary text instantly
 - Hybrid retrieval (semantic embeddings + TF-IDF)
 - Cross-encoder reranking for precision
-- MMR-based sentence extraction for grounded answers
-- Optional generation via Hugging Face Inference API (FLAN-T5)
-- Displays supporting passages and section/page attribution
-- Graceful fallback when no relevant match is found
+- Evidence-based answer generation
+- Optional local LLM responses via **Ollama**
+- Extractive fallback when generation is unavailable
+- Section and page-level attribution
+- Supporting passages viewer
 
 ---
 
 ## Architecture
 
-
->Chunking $\rightarrow$ Hybrid semantic retrieval $\rightarrow$ neural rerank $\rightarrow$ extractive grounding $\rightarrow$ optional generation
-
-
-### 1. Chunking
-
-The document is split into overlapping chunks to preserve context across boundaries.
-
-### 2. Hybrid Retrieval
-
-Each chunk is indexed two ways:
-
-- **Dense embeddings** using `sentence-transformers`
-- **Sparse TF-IDF** using bigrams
-
-A weighted hybrid score combines both:
-
-```python
-score = α * semantic_similarity + (1 - α) * keyword_similarity
 ```
 
-This enables:
-- Synonym understanding (pros ≈ advantages)
-- Exact keyword precision
-- Robust performance across writing styles
+Document
+↓
+Text extraction
+↓
+Chunking
+↓
+Hybrid retrieval (embeddings + TF-IDF)
+↓
+Cross-encoder reranking
+↓
+Evidence extraction (MMR)
+↓
+Answer generation (optional)
 
-### 3. Cross-Encoder Reranking
+```
 
-Top candidates are reranked using a cross-encoder model (MS MARCO MiniLM) for improved semantic accuracy.
+Pipeline summary:
 
-### 4. Extractive Grounding (MMR)
+```
 
-Maximal Marginal Relevance selects diverse, high-relevance sentences to form a grounded answer.
+Chunking → Hybrid retrieval → Neural rerank → Evidence grounding → Optional generation
 
-### 5. Optional Generation
+```
 
-A lightweight FLAN-T5 model (via Hugging Face Inference API) synthesizes a structured response using only retrieved evidence.
+---
 
-If generation is unavailable or fails, the system falls back to extractive output.
+## 1. Document Parsing
 
-### 6. Attribution
+Papertrail extracts document text using **PyMuPDF**, which preserves reading order and spacing more reliably than many PDF parsers.
+
+Each paragraph is mapped to:
+
+- its **section heading** (if detected)
+- its **page number**
+
+These mappings enable precise attribution in answers.
+
+---
+
+## 2. Chunking
+
+The document is split into overlapping text chunks so that contextual relationships are preserved across chunk boundaries.
+
+Chunking enables efficient indexing and retrieval across large documents.
+
+---
+
+## 3. Hybrid Retrieval
+
+Each chunk is indexed in two ways:
+
+### Dense semantic embeddings
+Using `sentence-transformers`.
+
+This captures semantic similarity.
+
+Example:
+
+```
+
+advantages ≈ pros
+drawbacks ≈ disadvantages
+
+````
+
+### Sparse keyword matching
+Using TF-IDF with bigrams.
+
+This captures exact phrases and technical terminology.
+
+The combined score:
+
+```python
+score = α * dense_similarity + (1 - α) * tfidf_similarity
+````
+
+Hybrid retrieval improves recall across both semantic and lexical queries.
+
+---
+
+## 4. Cross-Encoder Reranking
+
+The top candidate chunks are reranked using a **cross-encoder (MS MARCO MiniLM)**.
+
+Unlike embedding similarity, cross-encoders evaluate the **question and chunk jointly**, significantly improving ranking precision.
+
+---
+
+## 5. Evidence Extraction
+
+Maximal Marginal Relevance (MMR) selects a diverse set of high-relevance sentences from the top chunks.
+
+This produces an **evidence pack** that:
+
+* reduces noise
+* prevents redundancy
+* ensures answers remain grounded
+
+---
+
+## 6. Answer Modes
+
+Papertrail supports three answer modes.
+
+### Structured (no LLM)
+
+Produces a grounded extractive answer directly from the document.
+
+This mode guarantees:
+
+* no hallucination
+* deterministic behavior
+* complete grounding in the source text
+
+---
+
+### Local (Ollama)
+
+Uses a local LLM to synthesize an answer from retrieved evidence.
+
+Advantages:
+
+* higher fluency
+* better explanations
+* no external API required
+
+Install Ollama:
+
+```
+https://ollama.ai
+```
+
+Then pull a model:
+
+```bash
+ollama pull llama3
+```
+
+---
+
+### Hugging Face (best effort)
+
+Uses serverless inference for generation when available.
+
+If generation fails or times out, Papertrail automatically falls back to grounded extractive answers.
+
+---
+
+## Attribution
 
 Each answer can include:
-- Section headers (when available)
-- Page numbers (for PDFs)
-- Supporting passages in an expandable panel
+
+* detected **section headings**
+* **PDF page numbers**
+* **supporting passages**
+
+This makes it easy to verify exactly where an answer came from.
 
 ---
 
@@ -86,7 +201,7 @@ streamlit run app.py
 ## Deploying to Streamlit Cloud
 
 1. Push this repository to GitHub
-2. Go to [https://share.streamlit.io](https://share.streamlit.io)
+2. Go to [share.streamlit.io](https://share.streamlit.io)
 3. Connect your repo
 4. Set `app.py` as the entry point
 5. Deploy
@@ -95,13 +210,15 @@ streamlit run app.py
 
 ## Tech Stack
 
-* **Streamlit:** UI
-* **sentence-transformers:** semantic embeddings
-* **scikit-learn:** TF-IDF + cosine similarity
-* **CrossEncoder (MS MARCO MiniLM):** reranking
-* **pdfplumber:** PDF text extraction
-* **BeautifulSoup + requests:** URL scraping
-* **FLAN-T5 (Hugging Face Inference API):** optional generation
+| Component        | Tool                           |
+| ---------------- | ------------------------------ |
+| UI               | Streamlit                      |
+| Embeddings       | sentence-transformers          |
+| Sparse retrieval | scikit-learn TF-IDF            |
+| Neural reranking | CrossEncoder (MS MARCO MiniLM) |
+| PDF parsing      | PyMuPDF                        |
+| Web scraping     | requests + BeautifulSoup       |
+| Local LLM        | Ollama                         |
 
 ---
 
@@ -111,27 +228,34 @@ Pure TF-IDF fails on synonyms.
 
 Example:
 
-* "pros and cons"
-* "advantages and disadvantages"
+```
+pros and cons
+advantages and disadvantages
+```
 
-Hybrid retrieval solves this while still preserving exact keyword matching.
+Semantic retrieval fixes this, but pure embeddings miss exact keywords.
+
+Hybrid retrieval combines both.
 
 ---
 
 ## Extending Papertrail
 
-- [ ] Multi-document search with per-source ranking  
-- [ ] Vector store backend (FAISS, Qdrant)  
-- [ ] Persistent embedding cache  
-- [ ] Structured citation formatting  
-- [ ] Conversation memory across turns  
-- [ ] Local LLM deployment instead of remote API  
-- [ ] Support for `.docx`, `.csv`, or structured data inputs  
+Possible future improvements:
+
+- [ ] Multi-document search
+- [ ] Vector database backend (FAISS, Qdrant)
+- [ ] Persistent embedding cache
+- [ ] Structured citations
+- [ ] Conversation memory
+- [ ] Additional document formats (`.docx`, `.csv`)
+- [ ] Improved OCR for scanned PDFs
+
 ---
 
 ## Philosophy
 
-Papertrail is built around one principle:
+Papertrail follows one principle:
 
->_The model should answer from your document, not from its training data. Every answer is grounded in retrieved evidence._
+> The model should answer from your document, not from its training data. Every answer is grounded in retrieved evidence.
 

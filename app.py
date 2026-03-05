@@ -76,8 +76,19 @@ html, body, [class*="css"] {
 .stApp { background: var(--paper); }
 
 /* ── Sidebar ── */
-section[data-testid="stSidebar"] { background: var(--ink); border-right: none; }
-section[data-testid="stSidebar"] * { color: var(--paper) !important; }
+# section[data-testid="stSidebar"] { background: var(--ink); border-right: none; }
+# section[data-testid="stSidebar"] * { color: var(--paper) !important; }
+
+section[data-testid="stSidebar"] {
+    background: var(--ink);
+    color: var(--paper);
+    border-right: none;
+}
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] label {
+    color: var(--paper);
+}
 
 section[data-testid="stSidebar"] [data-testid="stFileUploader"],
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] > div,
@@ -244,28 +255,11 @@ section[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85; }
     box-shadow: none !important;
 }
 
-/* ── Sidebar selectbox readability fix ── */
-section[data-testid="stSidebar"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
-    background-color: #1a1a2e !important;
-    border-color: #374151 !important;
-}
-
-section[data-testid="stSidebar"] div[data-testid="stSelectbox"] div[data-baseweb="select"] div[value] {
-    color: #f5f0e8 !important;
-}
-
-section[data-testid="stSidebar"] div[data-testid="stSelectbox"] input[role="combobox"] {
-    color: #f5f0e8 !important;
-    -webkit-text-fill-color: #f5f0e8 !important;
-    caret-color: #f5f0e8 !important;
-}
-
 ul[role="listbox"] {
-    background-color: #1a1a2e !important;
+    background: var(--ink);
 }
-
 ul[role="listbox"] li {
-    color: #f5f0e8 !important;
+    color: var(--paper);
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1166,25 +1160,6 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         max_chunks=4, max_sents_per_chunk=2, max_chars=1400,
     )
 
-    debug = st.session_state.get("debug_retrieval", False)
-    if debug:
-        st.subheader("Retrieval debug")
-
-        with st.expander("Top retrieved chunks (hybrid score)", expanded=False):
-            for r, (chunk, score, idx) in enumerate(candidates[:10], start=1):
-                attr = retriever.get_attribution(idx)
-                st.markdown(f"**{r}. score={score:.4f}**  `{attr}`")
-                st.write(chunk[:1200])
-
-        with st.expander("Top reranked chunks (cross-encoder)", expanded=True):
-            for r, (chunk, score, idx) in enumerate(reranked[:10], start=1):
-                attr = retriever.get_attribution(idx)
-                st.markdown(f"**{r}. rerank={score:.4f}**  `{attr}`")
-                st.write(chunk[:1200])
-
-        with st.expander("Evidence passed to generator", expanded=True):
-            st.text(evidence_pack)
-
     mode = st.session_state.get("answer_mode", "Hugging Face (best effort)")
 
     generated = ""
@@ -1308,8 +1283,6 @@ with st.sidebar:
             index=["Structured (no LLM)", "Local (Ollama)", "Hugging Face (best effort)"].index(st.session_state.answer_mode),
         )
 
-        st.checkbox("Debug retrieval", key="debug_retrieval")
-
         if st.button("Clear & start over"):
             st.session_state.retriever = None
             st.session_state.source_name = None
@@ -1417,6 +1390,27 @@ def clean_raw_passage(text: str) -> str:
             out.append(p)
     return "\n\n".join(out).strip()
 
+def stream_words_into_bubble(text: str, source_label: str = ""):
+    ph = st.empty()
+    words = text.split()
+    buf = ""
+    for w in words:
+        buf += w + " "
+        ph.markdown(
+            f'<div class="msg-bot">'
+            f'{f"<div class=\\"msg-label\\">{html.escape(source_label)}</div>" if source_label else ""}'
+            f"<p>{html.escape(buf)}<span style='opacity:.5'>▌</span></p>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        time.sleep(0.01)
+    ph.markdown(
+        f'<div class="msg-bot">'
+        f'{f"<div class=\\"msg-label\\">{html.escape(source_label)}</div>" if source_label else ""}'
+        f"<p>{html.escape(buf.strip())}</p>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 
 # ── Chat history ──────────────────────────────────────────────────────────────
@@ -1453,15 +1447,22 @@ if st.session_state.retriever:
         # Show user bubble immediately
         st.markdown(f'<div class="msg-user">{html.escape(q)}</div>', unsafe_allow_html=True)
 
+        typing_ph = st.empty()
+        typing_ph.markdown(
+            '<div class="msg-bot"><div class="msg-label">assistant</div><p>Typing<span style="opacity:.6">▌</span></p></div>',
+            unsafe_allow_html=True
+        )
+
+        typing_ph.empty()
+
         with st.spinner("Thinking..."):
             answer_html, answer_text, score, extras, attribution_html = answer_question(
                 st.session_state.retriever, q
             )
 
         # Stream the plain-text answer word by word into a bot bubble
-        st.markdown('<div class="msg-bot">', unsafe_allow_html=True)
-        st.write_stream(stream_words(answer_text))
-        st.markdown('</div>', unsafe_allow_html=True)
+        source_label = "assistant"  
+        stream_words_into_bubble(answer_text, source_label=source_label)
 
         # Attribution bar
         if attribution_html:

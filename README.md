@@ -66,9 +66,7 @@ These mappings enable precise attribution in answers.
 
 ## 2. Chunking
 
-The document is split into overlapping text chunks so that contextual relationships are preserved across chunk boundaries.
-
-Chunking enables efficient indexing and retrieval across large documents.
+The document is split into overlapping text chunks so that contextual relationships are preserved across chunk boundaries. Chunking enables efficient indexing and retrieval across large documents.
 
 ---
 
@@ -77,9 +75,7 @@ Chunking enables efficient indexing and retrieval across large documents.
 Each chunk is indexed in two ways:
 
 ### Dense semantic embeddings
-Using `sentence-transformers`.
-
-This captures semantic similarity.
+Using `sentence-transformers`. This captures semantic similarity.
 
 Example:
 
@@ -91,11 +87,9 @@ drawbacks ≈ disadvantages
 ````
 
 ### Sparse keyword matching
-Using TF-IDF with bigrams.
+Using TF-IDF with bigrams. This captures exact phrases and technical terminology.
 
-This captures exact phrases and technical terminology.
-
-The combined score:
+The weighted combined score:
 
 ```python
 score = α * dense_similarity + (1 - α) * tfidf_similarity
@@ -107,17 +101,13 @@ Hybrid retrieval improves recall across both semantic and lexical queries.
 
 ## 4. Cross-Encoder Reranking
 
-The top candidate chunks are reranked using a **cross-encoder (MS MARCO MiniLM)**.
-
-Unlike embedding similarity, cross-encoders evaluate the **question and chunk jointly**, significantly improving ranking precision.
+The top candidate chunks are reranked using a **cross-encoder (MS MARCO MiniLM)**. Unlike embedding similarity, cross-encoders evaluate the **question and chunk jointly**, significantly improving ranking precision.
 
 ---
 
 ## 5. Evidence Extraction
 
-Maximal Marginal Relevance (MMR) selects a diverse set of high-relevance sentences from the top chunks.
-
-This produces an **evidence pack** that:
+Maximal Marginal Relevance (MMR) selects a diverse set of high-relevance sentences from the top chunks. This produces an **evidence pack** that:
 
 * reduces noise
 * prevents redundancy
@@ -131,9 +121,7 @@ Papertrail supports three answer modes.
 
 ### Structured (no LLM)
 
-Produces a grounded extractive answer directly from the document.
-
-This mode guarantees:
+Produces a grounded extractive answer directly from the document. This mode guarantees:
 
 * no hallucination
 * deterministic behavior
@@ -229,9 +217,7 @@ pros and cons
 advantages and disadvantages
 ```
 
-Semantic retrieval fixes this, but pure embeddings miss exact keywords.
-
-Hybrid retrieval combines both.
+Semantic retrieval fixes this, but pure embeddings miss exact keywords. Hybrid retrieval combines both.
 
 ---
 
@@ -250,8 +236,6 @@ Possible future improvements:
 ---
 
 ## Philosophy
-
-Papertrail follows one principle:
 
 > The model should answer from your document, not from its training data. Every answer is grounded in retrieved evidence.
 

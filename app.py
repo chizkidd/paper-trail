@@ -239,6 +239,34 @@ section[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85; }
     border-color: var(--ink) !important;
     box-shadow: none !important;
 }
+.stTextInput input:focus, .stTextArea textarea:focus {
+    border-color: var(--ink) !important;
+    box-shadow: none !important;
+}
+
+/* ── Sidebar selectbox readability fix ── */
+section[data-testid="stSidebar"] div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+    background-color: #1a1a2e !important;
+    border-color: #374151 !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stSelectbox"] div[data-baseweb="select"] div[value] {
+    color: #f5f0e8 !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stSelectbox"] input[role="combobox"] {
+    color: #f5f0e8 !important;
+    -webkit-text-fill-color: #f5f0e8 !important;
+    caret-color: #f5f0e8 !important;
+}
+
+ul[role="listbox"] {
+    background-color: #1a1a2e !important;
+}
+
+ul[role="listbox"] li {
+    color: #f5f0e8 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1280,10 +1308,7 @@ with st.sidebar:
             index=["Structured (no LLM)", "Local (Ollama)", "Hugging Face (best effort)"].index(st.session_state.answer_mode),
         )
 
-        st.session_state.debug_retrieval = st.checkbox(
-            "Debug retrieval",
-            value=st.session_state.get("debug_retrieval", False),
-        )
+        st.checkbox("Debug retrieval", key="debug_retrieval")
 
         if st.button("Clear & start over"):
             st.session_state.retriever = None

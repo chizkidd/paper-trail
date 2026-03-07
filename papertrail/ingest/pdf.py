@@ -45,7 +45,7 @@ def load_pdf(file_bytes: bytes) -> Tuple[str, Dict[int,str], Dict[int,int], str]
         for page_num in range(1, doc.page_count + 1):
             page = doc.load_page(page_num - 1)
             raw  = _normalize(page.get_text("text") or "")
-            if looks_scanned(raw)::
+            if looks_scanned(raw):
                 alt = _normalize(_extract_blocks(page))
                 if len(alt) > len(raw): 
                     raw = alt

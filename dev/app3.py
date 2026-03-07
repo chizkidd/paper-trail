@@ -811,7 +811,7 @@ def format_extractive_answer(answer_sents: List[str], attr_text: str) -> str:
         core = "I cannot determine this from the document."
     return f"{core}\n\nEvidence: ({attr_text})" if attr_text else core
 
-def focused_supporting_fallback(question: str, best_chunk: str, answer_sents: List[str]) -> str:
+def focused_supporting_fallback(best_chunk: str, answer_sents: List[str]) -> str:
     if answer_sents:
         return " ".join(answer_sents).strip()
     sents = []
@@ -862,7 +862,7 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
     if sup_si is not None:
         focused = focused_supporting_from_indices(chunks_sents, sup_ci, sup_si)
     else:
-        focused = focused_supporting_fallback(question, best_chunk, answer_sents)
+        focused = focused_supporting_fallback(best_chunk, answer_sents)
     focused = remove_display_latex_anywhere(as_text(focused))
 
     attribution_html = (

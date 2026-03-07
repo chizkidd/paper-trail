@@ -10,9 +10,12 @@ except Exception:
 
 @st.cache_resource(show_spinner="Loading reranker (first run only)...")
 def load_cross_encoder() -> Optional[object]:
-    if not _SUPPORT: return None
-    try:    return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-    except: return None
+    if not _SUPPORT: 
+        return None
+    try:    
+        return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    except: 
+        return None
 
 
 def rerank(
@@ -23,8 +26,9 @@ def rerank(
     ce = load_cross_encoder()
     if ce is None or not candidates:
         return candidates[:top_k]
+    pairs = [(question, c[0]) for c in candidates]
     try:
-        scores = ce.predict([(question, c[0]) for c in candidates])
+        scores = ce.predict(pairs)
         ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
         return [c for _, c in ranked[:top_k]]
     except Exception:

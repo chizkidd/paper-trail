@@ -97,17 +97,20 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
     if focused and normalize_ws(focused) != normalize_ws(answer_text):
         passages.append(html.escape(f"Supporting passage: {focused}"))
 
+    answer_body = "</p><p>".join(passages)
     answer_html = (
         f'<div class="msg-label">{source_label}</div>'
-        f'<p>{"</p><p>".join(passages)}</p>'
+        f"<p>{answer_body}</p>"
         f'<span class="match-pill {css_class}">{label}</span>'
     )
 
     extras, seen = [], set()
     for chunk, score, _ in reranked[1:]:
-        if score < 0.01: continue
+        if score < 0.01: 
+            continue
         key = normalize_ws(chunk[:200]).lower()
-        if key in seen: continue
+        if key in seen: 
+            continue
         seen.add(key)
         extras.append((chunk, score))
 

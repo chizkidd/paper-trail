@@ -22,19 +22,21 @@ def select_pool_sentences_mmr(
     retriever:  DocRetriever,
     question:   str,
     pool_sents: List[str],
-    k:          int   = 4,
-    min_rel:    float = 0.25,
-    lambda_div: float = 0.70,
-    max_chars:  int   = 900,
+    k:          int   = 3, 
+    min_rel:    float = 0.2,
+    lambda_div: float = 0.72,
+    max_chars:  int   = 650,
 ) -> List[int]:
     cleaned, idx_map = [], []
     for i, s in enumerate(pool_sents):
-        if is_noise_sentence(s): continue
+        if is_noise_sentence(s): 
+            continue
         s2 = strip_leading_display_latex(s)
         if s2:
             cleaned.append(s2)
             idx_map.append(i)
-    if not cleaned: return []
+    if not cleaned: 
+        return []
 
     q_emb = retriever.embedder.encode([question], normalize_embeddings=True)
     s_emb = retriever.embedder.encode(cleaned,    normalize_embeddings=True)
@@ -42,7 +44,8 @@ def select_pool_sentences_mmr(
     sim   = np.dot(s_emb, s_emb.T)
 
     candidates = [i for i, r in enumerate(rel) if r >= min_rel]
-    if not candidates: return []
+    if not candidates: 
+        return []
 
     selected, total_chars = [], 0
     while candidates and len(selected) < k and total_chars < max_chars:
@@ -50,10 +53,15 @@ def select_pool_sentences_mmr(
         for i in candidates:
             red = float(np.max(sim[i, selected])) if selected else 0.0
             mmr = lambda_div * float(rel[i]) - (1.0 - lambda_div) * red
-            if mmr > best_score: best_score, best_i = mmr, i
-        if best_i is None: break
+            if mmr > best_score: 
+                best_score, best_i = mmr, i
+        if best_i is None: 
+            break
+
         sent_len = len(cleaned[best_i])
-        if selected and (total_chars + 1 + sent_len) > max_chars: break
+        if selected and (total_chars + 1 + sent_len) > max_chars: 
+            break
+
         selected.append(best_i)
         total_chars += sent_len + 1
         candidates.remove(best_i)
@@ -74,7 +82,9 @@ def extractive_answer_from_results(
                 return ([s2] if s2 else []), (0, None), chunks_sents
         return [], (0, None), chunks_sents
 
-    picked = [x for x in (strip_leading_display_latex(pool_sents[i]) for i in chosen) if x]
+    picked = [strip_leading_display_latex(pool_sents[i]) for i in chosen]
+    picked = [x for x in picked if x]
+
     chunk_votes: Dict[int,List[int]] = {}
     for i in chosen:
         ci, si = meta[i]
@@ -89,7 +99,8 @@ def focused_supporting_from_indices(
     chosen_sent_indices: List[int],
 ) -> str:
     sents = chunks_sents[chosen_chunk_index] if chosen_chunk_index < len(chunks_sents) else []
-    if not sents: return ""
+    if not sents: 
+        return ""
     keep = set()
     for i in chosen_sent_indices:
         for j in range(max(0, i-1), min(len(sents), i+2)):
@@ -99,11 +110,15 @@ def focused_supporting_from_indices(
 
 
 def focused_supporting_fallback(best_chunk: str, answer_sents: List[str]) -> str:
-    if answer_sents: return " ".join(answer_sents).strip()
+    if answer_sents:
+        return " ".join(answer_sents).strip()
     sents = []
     for s in split_sentences(best_chunk):
-        if not is_noise_sentence(s):
-            s2 = strip_leading_display_latex(s)
-            if s2: sents.append(s2)
-        if len(sents) >= 3: break
+        if is_noise_sentence(s):
+            continue
+        s2 = strip_leading_display_latex(s)
+        if s2:
+            sents.append(s2)
+        if len(sents) >= 3:
+            break
     return " ".join(sents).strip()

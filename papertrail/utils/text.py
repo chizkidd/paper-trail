@@ -55,10 +55,14 @@ def clean_raw_passage(text: str) -> str:
     if not text: 
         return ""
     text = _LATEX_ANY_RE.sub("", text)
+    paras = [p.strip() for p in text.split("\n") if p.strip()]
     out = []
-    for p in (p.strip() for p in text.split("\n") if p.strip()):
-        p = normalize_ws(_SECTION_RE.sub("", _LABEL_RE.sub("", p)))
-        if p: out.append(p)
+    for p in paras:
+        p = _LABEL_RE.sub("", p)
+        p = _SECTION_RE.sub("", p)
+        p = normalize_ws(p)
+        if p: 
+            out.append(p)
     return "\n\n".join(out).strip()
 
 def dedup_paragraphs(text: str) -> str:

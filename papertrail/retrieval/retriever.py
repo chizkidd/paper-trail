@@ -29,16 +29,19 @@ class DocRetriever:
         q_emb  = self.embedder.encode([question], normalize_embeddings=True)
         dense  = np.dot(self.embeddings, q_emb[0])
         sparse = cosine_similarity(self.vectorizer.transform([question]), self.matrix).flatten()
+
         def norm01(x):
             x = np.asarray(x, dtype=float)
             mn, mx = float(x.min()), float(x.max())
             return np.zeros_like(x) if mx - mn < 1e-12 else (x - mn) / (mx - mn)
+
         scores  = alpha * norm01(dense) + (1.0 - alpha) * norm01(sparse)
         top_idx = np.argsort(scores)[::-1][:top_k]
         return [(self.chunks[i], float(scores[i]), int(i)) for i in top_idx]
 
     def score_sentences(self, question: str, sentences: List[str]) -> List[float]:
-        if not sentences: return []
+        if not sentences: 
+            return []
         q_vec = self.vectorizer.transform([question])
         s_mat = self.vectorizer.transform(sentences)
         return [float(x) for x in cosine_similarity(q_vec, s_mat).flatten()]
@@ -47,6 +50,8 @@ class DocRetriever:
         section = self.chunk_sections[chunk_idx] if chunk_idx < len(self.chunk_sections) else ""
         page    = self.chunk_pages[chunk_idx]    if chunk_idx < len(self.chunk_pages)    else None
         parts   = []
-        if section:          parts.append(f"§ {section}")
-        if page is not None: parts.append(f"p. {page}")
+        if section:          
+            parts.append(f"§ {section}")
+        if page is not None: 
+            parts.append(f"p. {page}")
         return "  ·  ".join(parts)

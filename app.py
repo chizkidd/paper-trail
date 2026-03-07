@@ -27,13 +27,25 @@ st.markdown("""
     --muted:  #7a7060;
     --border: #d4cfc4;
 }
-html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; background: var(--paper); color: var(--ink); }
+
+html, body, [class*="css"] {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+}
 .stApp { background: var(--paper); }
 
-section[data-testid="stSidebar"] { background: var(--ink); color: var(--paper); border-right: none; }
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    background: var(--ink);
+    color: var(--paper);
+    border-right: none;
+}
 section[data-testid="stSidebar"] p,
 section[data-testid="stSidebar"] span,
-section[data-testid="stSidebar"] label { color: var(--paper); }
+section[data-testid="stSidebar"] label {
+    color: var(--paper);
+}
 section[data-testid="stSidebar"] [data-testid="stFileUploader"],
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] > div,
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] section,
@@ -45,39 +57,154 @@ section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] span,
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] small,
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] p,
-section[data-testid="stSidebar"] [data-testid="stFileUploader"] div { color: rgba(245,240,232,0.85) !important; }
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] div {
+    color: rgba(245,240,232,0.85) !important;
+}
 section[data-testid="stSidebar"] .stButton button {
-    background: var(--accent) !important; color: white !important;
-    border: none !important; border-radius: 6px !important;
-    font-family: 'DM Sans', sans-serif; font-weight: 500; transition: opacity 0.15s;
+    background: var(--accent) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 6px !important;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    transition: opacity 0.15s;
 }
 section[data-testid="stSidebar"] .stButton button:hover { opacity: 0.85; }
+
+/* Dropdown menu */
 ul[role="listbox"] { background: var(--ink); }
 ul[role="listbox"] li { color: var(--paper); }
 
-.doc-header { font-family: 'DM Serif Display', serif; font-size: 2.6rem; letter-spacing: -0.02em; line-height: 1; color: var(--ink); margin-bottom: 0.15rem; }
-.doc-sub    { font-family: 'DM Mono', monospace; font-size: 0.75rem; color: var(--muted); letter-spacing: 0.07em; text-transform: uppercase; margin-bottom: 1.5rem; }
+/* Main typography */
+.doc-header {
+    font-family: 'DM Serif Display', serif;
+    font-size: 2.6rem;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+}
+.doc-sub {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    margin-bottom: 1.5rem;
+}
 
-.source-row   { display: flex; align-items: center; gap: 10px; margin-bottom: 1.5rem; margin-top: 0.5rem; }
-.source-badge { background: var(--ink); color: var(--paper); font-family: 'DM Mono', monospace; font-size: 0.7rem; padding: 3px 10px; border-radius: 3px; letter-spacing: 0.05em; max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chunk-count  { font-family: 'DM Mono', monospace; font-size: 0.7rem; color: var(--muted); }
+/* Source row */
+.source-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 1.5rem;
+    margin-top: 0.5rem;
+}
+.source-badge {
+    background: var(--ink);
+    color: var(--paper);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    padding: 3px 10px;
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+    max-width: 500px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.chunk-count {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--muted);
+}
 
-.msg-user  { background: var(--ink); color: var(--paper); border-radius: 12px 12px 4px 12px; padding: 0.75rem 1.1rem; margin: 0.75rem 0 0.75rem clamp(20px,10%,80px); font-size: 0.95rem; line-height: 1.5; word-break: break-word; }
-.msg-bot   { background: white; border: 1px solid var(--border); border-radius: 12px 12px 12px 4px; padding: 0.85rem 1.1rem; margin: 0.75rem clamp(20px,10%,80px) 0.75rem 0; font-size: 0.95rem; line-height: 1.65; box-shadow: 0 1px 4px rgba(0,0,0,0.05); word-break: break-word; }
-.msg-label { font-family: 'DM Mono', monospace; font-size: 0.68rem; color: var(--muted); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em; }
-
-.match-pill   { display: inline-block; font-family: 'DM Mono', monospace; font-size: 0.65rem; padding: 2px 7px; border-radius: 20px; margin-top: 0.5rem; letter-spacing: 0.04em; }
+/* Chat bubbles */
+.msg-user {
+    background: var(--ink);
+    color: var(--paper);
+    border-radius: 12px 12px 4px 12px;
+    padding: 0.75rem 1.1rem;
+    margin: 0.75rem 0 0.75rem clamp(20px, 10%, 80px);
+    font-size: 0.95rem;
+    line-height: 1.5;
+    word-break: break-word;
+}
+.msg-bot {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 12px 12px 12px 4px;
+    padding: 0.85rem 1.1rem;
+    margin: 0.75rem clamp(20px, 10%, 80px) 0.75rem 0;
+    font-size: 0.95rem;
+    line-height: 1.65;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    word-break: break-word;
+}
+.msg-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.match-pill {
+    display: inline-block;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    padding: 2px 7px;
+    border-radius: 20px;
+    margin-top: 0.5rem;
+    letter-spacing: 0.04em;
+}
 .match-high   { background: #d4edda; color: #155724; }
 .match-medium { background: #fff3cd; color: #856404; }
 .match-low    { background: #f8d7da; color: #721c24; }
 
-.attr-bar  { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: -0.4rem clamp(20px,10%,80px) 0.75rem 0; padding: 0 1.1rem; }
-.attr-pill { font-family: 'DM Mono', monospace; font-size: 0.65rem; color: var(--muted); background: #ede8df; border: 1px solid var(--border); padding: 2px 8px; border-radius: 3px; letter-spacing: 0.03em; }
+/* Attribution */
+.attr-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin: -0.4rem clamp(20px, 10%, 80px) 0.75rem 0;
+    padding: 0 1.1rem;
+}
+.attr-pill {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    background: #ede8df;
+    border: 1px solid var(--border);
+    padding: 2px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.03em;
+}
 
-.empty-state { text-align: center; padding: 4rem 2rem; color: var(--muted); font-family: 'DM Serif Display', serif; font-style: italic; font-size: 1.1rem; }
+/* Empty state */
+.empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: var(--muted);
+    font-family: 'DM Serif Display', serif;
+    font-style: italic;
+    font-size: 1.1rem;
+}
 
-.stTextInput input, .stTextArea textarea { border: 1.5px solid var(--border) !important; border-radius: 8px !important; font-family: 'DM Sans', sans-serif !important; background: white !important; transition: border-color 0.15s; }
-.stTextInput input:focus, .stTextArea textarea:focus { border-color: var(--ink) !important; box-shadow: none !important; }
+/* Inputs */
+.stTextInput input, .stTextArea textarea {
+    border: 1.5px solid var(--border) !important;
+    border-radius: 8px !important;
+    font-family: 'DM Sans', sans-serif !important;
+    background: white !important;
+    transition: border-color 0.15s;
+}
+.stTextInput input:focus, .stTextArea textarea:focus {
+    border-color: var(--ink) !important;
+    box-shadow: none !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -142,11 +269,21 @@ with st.sidebar:
                 st.session_state.answer_mode
             ),
         )
+
+        # if st.button("Clear & start over"):
+        #     for k in ("retriever","source_name","chunk_count","messages","pdf_bytes","pdf_name"):
+        #         st.session_state[k] = None if k not in ("messages",) else []
+        #     st.session_state.pdf_bytes = None
+        #     st.session_state.pdf_name  = ""
+        #     st.rerun()
+
         if st.button("Clear & start over"):
-            for k in ("retriever","source_name","chunk_count","messages","pdf_bytes","pdf_name"):
-                st.session_state[k] = None if k not in ("messages",) else []
+            st.session_state.retriever = None
+            st.session_state.source_name = None
+            st.session_state.chunk_count = 0
+            st.session_state.messages = []
             st.session_state.pdf_bytes = None
-            st.session_state.pdf_name  = ""
+            st.session_state.pdf_name = ""
             st.rerun()
 
 # ── Header ─────────────────────────────────────────────────────────────────────
@@ -174,8 +311,10 @@ if source_type == "URL":
             else:
                 with st.spinner("Indexing..."):
                     err = build_knowledge_base(text, url_val.strip(), section_map=section_map)
-                if err:  st.error(err)
-                else:    st.rerun()
+                if err:  
+                    st.error(err)
+                else:    
+                    st.rerun()
 
 elif source_type == "Paste Text":
     pasted = st.text_area("Paste text", height=200,
@@ -187,17 +326,17 @@ elif source_type == "Paste Text":
         else:
             with st.spinner("Indexing..."):
                 err = build_knowledge_base(pasted.strip(), "Pasted text")
-            if err:  st.error(err)
-            else:    st.rerun()
+            if err:  
+                st.error(err)
+            else:    
+                st.rerun()
 
 # ── Source badge ───────────────────────────────────────────────────────────────
 if st.session_state.retriever and st.session_state.source_name:
     src = html.escape(str(st.session_state.source_name))
     st.markdown(
-        f'<div class="source-row">'
-        f'<span class="source-badge" title="{src}">{src}</span>'
-        f'<span class="chunk-count">{st.session_state.chunk_count} chunks</span>'
-        f'</div>',
+        f'<div class="source-row"><span class="source-badge" title="{src}">{src}</span>'
+        f'<span class="chunk-count">{st.session_state.chunk_count} chunks</span></div>',
         unsafe_allow_html=True,
     )
 

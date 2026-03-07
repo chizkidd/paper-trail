@@ -941,13 +941,13 @@ with st.sidebar:
     st.markdown("Load a document, then ask it anything.")
     st.markdown("---")
 
-    source_type = st.radio(
+    st.radio(
         "Source",
         ["URL", "PDF Upload", "Paste Text"],
-        index=["URL", "PDF Upload", "Paste Text"].index(st.session_state.source_type),
+        key="source_type",
         label_visibility="collapsed",
     )
-    st.session_state.source_type = source_type
+    source_type = st.session_state.source_type
 
     if source_type == "PDF Upload":
         uploaded = st.file_uploader("Upload PDF", type=["pdf"], label_visibility="collapsed")

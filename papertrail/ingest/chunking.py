@@ -22,10 +22,12 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 30) -> List[str]
 
 
 def _resolve(m: Optional[Dict], i: int):
-    if not m: return None
+    if not m: 
+        return None
     val = None
     for k in sorted(m.keys()):
-        if k <= i: val = m[k]
+        if k <= i: 
+            val = m[k]
     return val
 
 
@@ -37,6 +39,6 @@ def prepare_chunks(
     """Return (raw_chunks, chunk_sections, chunk_pages, embed_chunks)."""
     raw      = chunk_text(dedup_paragraphs(text))
     sections = [_resolve(section_map, i) or "" for i in range(len(raw))]
-    pages    = [_resolve(page_map,    i)     for i in range(len(raw))]
+    pages    = [_resolve(page_map,    i) for i in range(len(raw))]
     embed    = [f"{s}. {c}" if s else c for c, s in zip(raw, sections)]
     return raw, sections, pages, embed

@@ -13,9 +13,12 @@ _SECTION_RE     = re.compile(
 
 
 def as_text(x) -> str:
-    if x is None:                  return ""
-    if isinstance(x, str):         return x
-    if isinstance(x, (list,tuple)): return " ".join(str(i) for i in x if i is not None)
+    if x is None:                  
+        return ""
+    if isinstance(x, str):         
+        return x
+    if isinstance(x, (list,tuple)): 
+        return " ".join(str(i) for i in x if i is not None)
     return str(x)
 
 def normalize_ws(s: str) -> str:
@@ -32,9 +35,11 @@ def split_sentences(text: str) -> List[str]:
     return [s.strip() for s in _SENT_SPLIT_RE.split(text) if s.strip()] if text else []
 
 def match_label(score: float) -> Tuple[str, str]:
-    if score >= 0.25: return "strong match",  "match-high"
-    if score >= 0.08: return "partial match", "match-medium"
-    return               "weak match",   "match-low"
+    if score >= 0.25: 
+        return "strong match",  "match-high"
+    if score >= 0.08: 
+        return "partial match", "match-medium"
+    return "weak match",   "match-low"
 
 def is_noise_sentence(s: str) -> bool:
     n = normalize_ws(s)
@@ -47,7 +52,8 @@ def remove_display_latex_anywhere(s: str) -> str:
     return normalize_ws(_LATEX_ANY_RE.sub("", s or ""))
 
 def clean_raw_passage(text: str) -> str:
-    if not text: return ""
+    if not text: 
+        return ""
     text = _LATEX_ANY_RE.sub("", text)
     out = []
     for p in (p.strip() for p in text.split("\n") if p.strip()):
@@ -56,12 +62,14 @@ def clean_raw_passage(text: str) -> str:
     return "\n\n".join(out).strip()
 
 def dedup_paragraphs(text: str) -> str:
-    if not text: return ""
+    if not text: 
+        return ""
     seen, out = set(), []
     for p in (ln.strip() for ln in text.splitlines() if ln.strip()):
         key = normalize_ws(p).lower()
         if len(key) >= 40:
-            if key in seen: continue
+            if key in seen: 
+                continue
             seen.add(key)
         out.append(p)
     return "\n".join(out).strip()

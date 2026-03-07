@@ -20,11 +20,12 @@ def _normalize(t: str) -> str:
         out.append(re.sub(r"\s+", " ", line).strip())
     return "\n".join(out).strip()
 
-
 def _extract_blocks(page) -> str:
     blocks = sorted(page.get_text("blocks") or [], key=lambda b: (round(b[1],1), round(b[0],1)))
     return "\n".join((b[4] or "").strip() for b in blocks if (b[4] or "").strip())
 
+def looks_scanned(t: str, min_chars: int = 40) -> bool:
+    return len((t or "").strip()) < min_chars
 
 def load_pdf(file_bytes: bytes) -> Tuple[str, Dict[int,str], Dict[int,int], str]:
     """Return (text, section_map, page_map, err). PyMuPDF with block fallback."""
@@ -44,10 +45,12 @@ def load_pdf(file_bytes: bytes) -> Tuple[str, Dict[int,str], Dict[int,int], str]
         for page_num in range(1, doc.page_count + 1):
             page = doc.load_page(page_num - 1)
             raw  = _normalize(page.get_text("text") or "")
-            if len(raw.strip()) < 40:
+            if looks_scanned(raw)::
                 alt = _normalize(_extract_blocks(page))
-                if len(alt) > len(raw): raw = alt
-            if len(raw.strip()) < 40: raw = ""
+                if len(alt) > len(raw): 
+                    raw = alt
+            if looks_scanned(raw): 
+                raw = ""
             page_map[para_idx] = page_num
             for line in raw.splitlines():
                 line = line.strip()

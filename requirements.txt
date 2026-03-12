@@ -1,12 +1,16 @@
 streamlit>=1.32.0
 scikit-learn>=1.3.0
 numpy>=1.24.0
-pdfplumber>=0.10.3
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 
-# embeddings
+# embeddings + reranking
 torch>=2.1.0
 sentence-transformers>=2.7.0,<3.0.0
 
+# PDF parsing
 pymupdf
+
+# OCR (optional — enables scanned PDF support)
+# pytesseract>=0.3.10
+# Pillow>=10.0.0

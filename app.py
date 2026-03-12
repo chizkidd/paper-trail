@@ -3,7 +3,14 @@ import streamlit as st
 
 from papertrail.ingest.pdf import load_pdf
 from papertrail.ingest.web import load_url
-from papertrail.qa import answer_question, build_knowledge_base
+from papertrail.qa import (
+    answer_question,
+    build_knowledge_base,
+    get_active_doc,
+    get_active_retriever,
+    get_documents,
+    remove_document,
+)
 from papertrail.utils.text import clean_raw_passage
 from papertrail.utils.stream import stream_words_into_bubble
 
@@ -83,14 +90,12 @@ ul[role="listbox"] li { color: var(--paper); }
 
 # ── Session state ──────────────────────────────────────────────────────────────
 for k, d in [
-    ("retriever",   None),
-    ("source_name", None),
-    ("chunk_count", 0),
-    ("messages",    []),
-    ("source_type", "URL"),
-    ("answer_mode", "Hugging Face (best effort)"),
-    ("pdf_bytes",   None),
-    ("pdf_name",    ""),
+    ("documents",      []),
+    ("active_doc_idx", 0),
+    ("source_type",    "URL"),
+    ("answer_mode",    "Hugging Face (best effort)"),
+    ("pdf_bytes",      None),
+    ("pdf_name",       ""),
 ]:
     st.session_state.setdefault(k, d)
 
@@ -100,6 +105,29 @@ with st.sidebar:
     st.markdown("Load a document, then ask it anything.")
     st.markdown("---")
 
+    # ── Document list ──────────────────────────────────────────────────────────
+    docs = get_documents()
+    if docs:
+        st.markdown("**Documents**")
+        for i, doc in enumerate(docs):
+            col_a, col_b = st.columns([5, 1])
+            with col_a:
+                label = doc["source_name"][:28] + "…" if len(doc["source_name"]) > 28 else doc["source_name"]
+                is_active = i == st.session_state.active_doc_idx
+                if st.button(
+                    f"{'▶ ' if is_active else ''}{label}",
+                    key=f"doc_select_{i}",
+                    use_container_width=True,
+                ):
+                    st.session_state.active_doc_idx = i
+                    st.rerun()
+            with col_b:
+                if st.button("✕", key=f"doc_remove_{i}"):
+                    remove_document(i)
+                    st.rerun()
+        st.markdown("---")
+
+    # ── Source selector ────────────────────────────────────────────────────────
     st.radio(
         "Source",
         ["URL", "PDF Upload", "Paste Text"],
@@ -119,22 +147,29 @@ with st.sidebar:
         if st.session_state.pdf_bytes and st.button("Build Knowledge Base", key="build_pdf"):
             with st.spinner("Reading PDF..."):
                 text, section_map, page_map, err = load_pdf(st.session_state.pdf_bytes)
-            if err:
+            if err and not text:
                 st.error(err)
             else:
-                with st.spinner("Indexing..."):
-                    err = build_knowledge_base(text, st.session_state.pdf_name,
-                                               section_map=section_map, page_map=page_map)
                 if err:
-                    st.error(err)
+                    st.info(err)  # non-fatal note (e.g. OCR used)
+                with st.spinner("Indexing..."):
+                    idx_err = build_knowledge_base(
+                        text, st.session_state.pdf_name,
+                        section_map=section_map, page_map=page_map,
+                    )
+                if idx_err:
+                    st.error(idx_err)
                 else:
                     st.session_state.pdf_bytes = None
                     st.rerun()
 
-    if st.session_state.retriever:
+    # ── Active doc controls ────────────────────────────────────────────────────
+    active_doc = get_active_doc()
+    if active_doc:
         st.markdown("---")
-        st.caption(f"Active: {str(st.session_state.source_name)[:40]}")
-        st.caption(f"{st.session_state.chunk_count} chunks indexed")
+        st.caption(f"Active: {active_doc['source_name'][:40]}")
+        st.caption(f"{active_doc['chunk_count']} chunks indexed")
+
         st.session_state.answer_mode = st.selectbox(
             "Answer mode",
             ["Structured (no LLM)", "Local (Ollama)", "Hugging Face (best effort)"],
@@ -142,22 +177,6 @@ with st.sidebar:
                 st.session_state.answer_mode
             ),
         )
-
-        # if st.button("Clear & start over"):
-        #     for k in ("retriever","source_name","chunk_count","messages","pdf_bytes","pdf_name"):
-        #         st.session_state[k] = None if k not in ("messages",) else []
-        #     st.session_state.pdf_bytes = None
-        #     st.session_state.pdf_name  = ""
-        #     st.rerun()
-
-        if st.button("Clear & start over"):
-            st.session_state.retriever = None
-            st.session_state.source_name = None
-            st.session_state.chunk_count = 0
-            st.session_state.messages = []
-            st.session_state.pdf_bytes = None
-            st.session_state.pdf_name = ""
-            st.rerun()
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown('<div class="doc-header">Papertrail</div>', unsafe_allow_html=True)
@@ -184,9 +203,9 @@ if source_type == "URL":
             else:
                 with st.spinner("Indexing..."):
                     err = build_knowledge_base(text, url_val.strip(), section_map=section_map)
-                if err:  
+                if err:
                     st.error(err)
-                else:    
+                else:
                     st.rerun()
 
 elif source_type == "Paste Text":
@@ -199,47 +218,50 @@ elif source_type == "Paste Text":
         else:
             with st.spinner("Indexing..."):
                 err = build_knowledge_base(pasted.strip(), "Pasted text")
-            if err:  
+            if err:
                 st.error(err)
-            else:    
+            else:
                 st.rerun()
 
 # ── Source badge ───────────────────────────────────────────────────────────────
-if st.session_state.retriever and st.session_state.source_name:
-    src = html.escape(str(st.session_state.source_name))
+active_doc = get_active_doc()
+if active_doc:
+    src = html.escape(active_doc["source_name"])
     st.markdown(
         f'<div class="source-row"><span class="source-badge" title="{src}">{src}</span>'
-        f'<span class="chunk-count">{st.session_state.chunk_count} chunks</span></div>',
+        f'<span class="chunk-count">{active_doc["chunk_count"]} chunks</span></div>',
         unsafe_allow_html=True,
     )
 
 # ── Empty state ────────────────────────────────────────────────────────────────
-if not st.session_state.retriever:
+retriever = get_active_retriever()
+if not retriever:
     msg = "Upload a PDF from the sidebar to begin." if source_type == "PDF Upload" \
           else "Load a document above to begin."
     st.markdown(f'<div class="empty-state">{msg}</div>', unsafe_allow_html=True)
-elif not st.session_state.messages:
+elif not active_doc.get("messages"):
     st.markdown('<div class="empty-state">Knowledge base ready -- ask your first question.</div>',
                 unsafe_allow_html=True)
 
 # ── Chat history ───────────────────────────────────────────────────────────────
-for msg in st.session_state.messages:
-    if msg.get("role") == "user":
-        st.markdown(f'<div class="msg-user">{html.escape(msg.get("content",""))}</div>',
-                    unsafe_allow_html=True)
-    else:
-        st.markdown(f'<div class="msg-bot">{html.escape(msg.get("answer_text") or "")}</div>',
-                    unsafe_allow_html=True)
-        if msg.get("attribution_html"):
-            st.markdown(msg["attribution_html"], unsafe_allow_html=True)
-        if msg.get("extras"):
-            with st.expander("Show supporting passages"):
-                for chunk, score in msg["extras"]:
-                    st.caption(f"score: {score:.3f}")
-                    st.write(clean_raw_passage(chunk))
+if active_doc:
+    for msg in active_doc.get("messages", []):
+        if msg.get("role") == "user":
+            st.markdown(f'<div class="msg-user">{html.escape(msg.get("content",""))}</div>',
+                        unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="msg-bot">{html.escape(msg.get("answer_text") or "")}</div>',
+                        unsafe_allow_html=True)
+            if msg.get("attribution_html"):
+                st.markdown(msg["attribution_html"], unsafe_allow_html=True)
+            if msg.get("extras"):
+                with st.expander("Show supporting passages"):
+                    for chunk, score in msg["extras"]:
+                        st.caption(f"score: {score:.3f}")
+                        st.write(clean_raw_passage(chunk))
 
 # ── Live input ─────────────────────────────────────────────────────────────────
-if st.session_state.retriever:
+if retriever:
     question = st.chat_input("Ask a question about your document...")
     if question and question.strip():
         q = question.strip()
@@ -253,7 +275,7 @@ if st.session_state.retriever:
         )
 
         answer_html, answer_text, score, extras, attribution_html = \
-            answer_question(st.session_state.retriever, q)
+            answer_question(retriever, q)
         typing_ph.empty()
 
         stream_words_into_bubble(answer_text, source_label="assistant")
@@ -266,12 +288,16 @@ if st.session_state.retriever:
                     st.caption(f"score: {s:.3f}")
                     st.write(clean_raw_passage(chunk))
 
-        st.session_state.messages.append({"role": "user", "content": q})
-        st.session_state.messages.append({
-            "role": "assistant", "content": answer_html,
-            "extras": extras, "attribution_html": attribution_html,
-            "answer_text": answer_text,
-        })
+        # Append to the active document's message history
+        active_doc = get_active_doc()
+        if active_doc is not None:
+            active_doc["messages"].append({"role": "user", "content": q})
+            active_doc["messages"].append({
+                "role": "assistant", "content": answer_html,
+                "extras": extras, "attribution_html": attribution_html,
+                "answer_text": answer_text,
+            })
+
         st.markdown(
             "<script>window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});</script>",
             unsafe_allow_html=True,

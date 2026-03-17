@@ -19,20 +19,20 @@ def build_evidence_pack(
     q_emb = retriever.embedder.encode([question], normalize_embeddings=True)
 
     for chunk, score, idx in reranked[:max_chunks]:
-        if score < 0.01: 
+        if score < 0.01:
             continue
         attr  = retriever.get_attribution(idx) or f"Chunk: {idx}"
         sents = [s for s in split_sentences(chunk) if not is_noise_sentence(s)]
-        if not sents: 
+        if not sents:
             continue
 
         s_emb = retriever.embedder.encode(sents, normalize_embeddings=True)
         rel = np.dot(s_emb, q_emb[0])
         order = np.argsort(rel)[::-1][:max_sents_per_chunk]
-        
+
         for j in order:
             sent = remove_display_latex_anywhere(as_text(sents[int(j)]))
-            if not sent: 
+            if not sent:
                 continue
             line = f"[{attr}] {sent}"
             if total + len(line) + 1 > max_chars:
@@ -46,5 +46,6 @@ def format_extractive_answer(answer_sents: List[str], attr_text: str) -> str:
     core = remove_display_latex_anywhere(
         " ".join(as_text(s) for s in (answer_sents or []) if s).strip()
     )
-    if not core: core = "I cannot determine this from the document."
+    if not core:
+        core = "I cannot determine this from the document."
     return f"{core}\n\nEvidence: ({attr_text})" if attr_text else core

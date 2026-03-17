@@ -1,5 +1,4 @@
 """Tests for papertrail.ingest.pdf (file size validation, scanned detection)."""
-import pytest
 
 from papertrail import config
 from papertrail.ingest.pdf import load_pdf, looks_scanned

@@ -1,5 +1,4 @@
 """Unit tests for papertrail.ingest.chunking."""
-import pytest
 
 from papertrail.ingest.chunking import chunk_text, prepare_chunks
 

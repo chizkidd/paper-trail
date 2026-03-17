@@ -1,5 +1,4 @@
 """Unit tests for papertrail.utils.text (pure functions, no ML deps)."""
-import pytest
 
 from papertrail.utils.text import (
     as_text,

@@ -7,7 +7,7 @@ See papertrail/cache.py for the safe (pickle-free) serialization format.
 import hashlib
 import html
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import streamlit as st
 

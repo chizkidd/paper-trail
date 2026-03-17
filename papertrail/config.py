@@ -4,6 +4,7 @@ Central configuration for Paper-trail.
 All model names, hyperparameters, and limits live here so they can be
 tuned in one place rather than scattered across the codebase.
 """
+import os
 
 # ── Retrieval ──────────────────────────────────────────────────────────────────
 
@@ -45,7 +46,5 @@ PDF_MAX_BYTES = 50 * 1024 * 1024   # 50 MB
 PDF_SCANNED_THRESHOLD = 40
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
-
-import os
 
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".papertrail_cache")

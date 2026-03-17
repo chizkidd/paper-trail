@@ -5,7 +5,6 @@ import tempfile
 
 import numpy as np
 import pytest
-import scipy.sparse as sp
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from papertrail.cache import save_vectorizer as _save_vectorizer, load_vectorizer as _load_vectorizer

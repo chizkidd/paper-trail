@@ -1,8 +1,14 @@
 from typing import Dict, List, Optional, Tuple
+
+from papertrail import config
 from papertrail.utils.text import dedup_paragraphs
 
 
-def chunk_text(text: str, chunk_size: int = 800, overlap: int = 30) -> List[str]:
+def chunk_text(
+    text: str,
+    chunk_size: int = config.CHUNK_SIZE,
+    overlap: int = config.CHUNK_OVERLAP,
+) -> List[str]:
     paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
     chunks: List[str] = []
     current: List[str] = []
@@ -22,19 +28,19 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 30) -> List[str]
 
 
 def _resolve(m: Optional[Dict], i: int):
-    if not m: 
+    if not m:
         return None
     val = None
     for k in sorted(m.keys()):
-        if k <= i: 
+        if k <= i:
             val = m[k]
     return val
 
 
 def prepare_chunks(
     text: str,
-    section_map: Optional[Dict[int,str]] = None,
-    page_map:    Optional[Dict[int,int]] = None,
+    section_map: Optional[Dict[int, str]] = None,
+    page_map:    Optional[Dict[int, int]] = None,
 ) -> Tuple[List[str], List[str], List, List[str]]:
     """Return (raw_chunks, chunk_sections, chunk_pages, embed_chunks)."""
     raw      = chunk_text(dedup_paragraphs(text))

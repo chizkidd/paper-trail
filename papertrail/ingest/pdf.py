@@ -1,6 +1,11 @@
+import logging
 import re
 import unicodedata
 from typing import Dict, List, Tuple
+
+from papertrail import config
+
+logger = logging.getLogger(__name__)
 
 _HEADING_RE = re.compile(r"^(?:\d+[\d\.]*\s+)?[A-Z][^\n]{0,80}$")
 
@@ -26,7 +31,7 @@ def _extract_blocks(page) -> str:
     return "\n".join((b[4] or "").strip() for b in blocks if (b[4] or "").strip())
 
 
-def looks_scanned(t: str, min_chars: int = 40) -> bool:
+def looks_scanned(t: str, min_chars: int = config.PDF_SCANNED_THRESHOLD) -> bool:
     return len((t or "").strip()) < min_chars
 
 
@@ -40,24 +45,34 @@ def _ocr_page(page) -> str:
         pix = page.get_pixmap(dpi=200)
         img = Image.open(io.BytesIO(pix.tobytes("png")))
         return pytesseract.image_to_string(img) or ""
-    except Exception:
+    except ImportError:
+        logger.debug("pytesseract/Pillow not installed — OCR skipped.")
+        return ""
+    except Exception as exc:
+        logger.warning("OCR failed on page: %s", exc)
         return ""
 
 
 def load_pdf(file_bytes: bytes) -> Tuple[str, Dict[int, str], Dict[int, int], str]:
     """
     Return (text, section_map, page_map, err).
+
+    Rejects files larger than config.PDF_MAX_BYTES before parsing.
     Extraction order per page:
       1. PyMuPDF text stream
       2. PyMuPDF block-level fallback
       3. Tesseract OCR (if pytesseract + Pillow installed)
     """
+    if len(file_bytes) > config.PDF_MAX_BYTES:
+        limit_mb = config.PDF_MAX_BYTES // (1024 * 1024)
+        return "", {}, {}, f"PDF exceeds the {limit_mb} MB size limit. Please use a smaller file."
+
     try:
         import fitz
-    except Exception:
+    except ImportError:
         try:
             import pymupdf as fitz  # type: ignore
-        except Exception:
+        except ImportError:
             return "", {}, {}, "PyMuPDF not installed. Add 'pymupdf' to requirements.txt."
 
     try:
@@ -86,7 +101,13 @@ def load_pdf(file_bytes: bytes) -> Tuple[str, Dict[int, str], Dict[int, int], st
                 if ocr_text.strip():
                     raw = _normalize(ocr_text)
                     ocr_used = True
+                    logger.info("OCR used for page %d.", page_num)
                 else:
+                    logger.warning(
+                        "Page %d appears scanned but OCR produced no text. "
+                        "Install pytesseract and Pillow to enable OCR support.",
+                        page_num,
+                    )
                     raw = ""
 
             page_map[para_idx] = page_num
@@ -110,5 +131,6 @@ def load_pdf(file_bytes: bytes) -> Tuple[str, Dict[int, str], Dict[int, int], st
         note = " (OCR used for some pages)" if ocr_used else ""
         return text, section_map, page_map, note
 
-    except Exception as e:
-        return "", {}, {}, f"PDF parse error: {e}"
+    except Exception as exc:
+        logger.error("PDF parse error: %s", exc)
+        return "", {}, {}, f"PDF parse error: {exc}"

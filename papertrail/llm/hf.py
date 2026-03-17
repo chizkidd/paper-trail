@@ -1,14 +1,19 @@
+import logging
 import re
 from typing import Tuple
 
-HF_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
-HF_TOKEN   = None  # set via st.secrets (optional)
+from papertrail import config
+
+logger = logging.getLogger(__name__)
 
 try:
     import requests
     _SUPPORT = True
-except Exception:
+except ImportError:
     _SUPPORT = False
+
+# Optional token from Streamlit secrets (set at runtime by app.py if available).
+HF_TOKEN: str | None = None
 
 
 def _evidence_overlap_ratio(answer: str, evidence: str) -> float:
@@ -41,20 +46,21 @@ def generate_answer_hf(question: str, context: str) -> Tuple[str, bool]:
 
     try:
         resp = requests.post(
-            HF_API_URL,
+            config.HF_API_URL,
             headers=headers,
             json={
                 "inputs": prompt,
                 "parameters": {
-                    "max_new_tokens": 300,
-                    "temperature": 0.2,
-                    "do_sample": False,
+                    "max_new_tokens": config.HF_MAX_NEW_TOKENS,
+                    "temperature":    config.HF_TEMPERATURE,
+                    "do_sample":      False,
                     "return_full_text": False,
                 },
             },
-            timeout=45,
+            timeout=config.HF_TIMEOUT,
         )
         if resp.status_code == 503:
+            logger.debug("HF model loading (503), skipping generation.")
             return "", False
         resp.raise_for_status()
         data = resp.json()
@@ -80,6 +86,15 @@ def generate_answer_hf(question: str, context: str) -> Tuple[str, bool]:
                 return "", False
 
             return answer, True
+
         return "", False
-    except Exception:
+
+    except requests.exceptions.Timeout:
+        logger.warning("HF API request timed out after %ss.", config.HF_TIMEOUT)
+        return "", False
+    except requests.exceptions.RequestException as exc:
+        logger.warning("HF API request failed: %s", exc)
+        return "", False
+    except Exception as exc:
+        logger.warning("Unexpected error during HF generation: %s", exc)
         return "", False

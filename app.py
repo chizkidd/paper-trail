@@ -1,7 +1,12 @@
 import html
+import logging
+
 import streamlit as st
 
+from papertrail import config
 from papertrail.ingest.pdf import load_pdf
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 from papertrail.ingest.web import load_url
 from papertrail.qa import (
     answer_question,
@@ -137,7 +142,12 @@ with st.sidebar:
     source_type = st.session_state.source_type
 
     if source_type == "PDF Upload":
-        uploaded = st.file_uploader("Upload PDF", type=["pdf"], label_visibility="collapsed")
+        limit_mb = config.PDF_MAX_BYTES // (1024 * 1024)
+        uploaded = st.file_uploader(
+            f"Upload PDF (max {limit_mb} MB)",
+            type=["pdf"],
+            label_visibility="collapsed",
+        )
         if uploaded is not None:
             fb = uploaded.read()
             if fb:

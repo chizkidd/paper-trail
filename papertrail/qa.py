@@ -2,15 +2,16 @@
 Orchestrator. app.py calls answer_question() and build_knowledge_base().
 Multi-document: session state holds a list of indexed documents.
 Persistence: each retriever is serialized to disk on creation and reloaded on startup.
+See papertrail/cache.py for the safe (pickle-free) serialization format.
 """
 import hashlib
 import html
-import os
-import pickle
+import logging
 from typing import Dict, List, Optional, Tuple
 
 import streamlit as st
 
+from papertrail import cache as doc_cache
 from papertrail.ingest.chunking import prepare_chunks
 from papertrail.retrieval.retriever import DocRetriever
 from papertrail.retrieval.rerank import rerank
@@ -24,53 +25,7 @@ from papertrail.llm.hf import generate_answer_hf
 from papertrail.llm.ollama import generate_answer_ollama
 from papertrail.utils.text import as_text, match_label, normalize_ws, remove_display_latex_anywhere
 
-# ── Persistence ────────────────────────────────────────────────────────────────
-
-_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".papertrail_cache")
-
-
-def _cache_path(source_name: str, text_hash: str) -> str:
-    key = hashlib.md5(f"{source_name}:{text_hash}".encode()).hexdigest()
-    return os.path.join(_CACHE_DIR, f"{key}.pkl")
-
-
-def _save_retriever(retriever: DocRetriever, source_name: str, text_hash: str) -> None:
-    try:
-        os.makedirs(_CACHE_DIR, exist_ok=True)
-        path = _cache_path(source_name, text_hash)
-        with open(path, "wb") as f:
-            pickle.dump({
-                "chunks":         retriever.chunks,
-                "chunk_sections": retriever.chunk_sections,
-                "chunk_pages":    retriever.chunk_pages,
-                "embeddings":     retriever.embeddings,
-                "matrix":         retriever.matrix,
-                "vectorizer":     retriever.vectorizer,
-            }, f)
-    except Exception:
-        pass  # persistence is best-effort; never block indexing
-
-
-def _load_retriever(source_name: str, text_hash: str) -> Optional[DocRetriever]:
-    try:
-        path = _cache_path(source_name, text_hash)
-        if not os.path.exists(path):
-            return None
-        with open(path, "rb") as f:
-            data = pickle.load(f)
-        r = DocRetriever.__new__(DocRetriever)
-        r.chunks         = data["chunks"]
-        r.chunk_sections = data["chunk_sections"]
-        r.chunk_pages    = data["chunk_pages"]
-        r.embeddings     = data["embeddings"]
-        r.matrix         = data["matrix"]
-        r.vectorizer     = data["vectorizer"]
-        # embedder is a cached resource — reattach it
-        from papertrail.retrieval.embedder import load_embedder
-        r.embedder = load_embedder()
-        return r
-    except Exception:
-        return None
+logger = logging.getLogger(__name__)
 
 
 def _text_hash(text: str) -> str:
@@ -117,19 +72,20 @@ def build_knowledge_base(
     th = _text_hash(text)
 
     # Try cache first
-    retriever = _load_retriever(source_name, th)
+    retriever = doc_cache.load_retriever(source_name, th)
 
     if retriever is None:
         try:
             retriever = DocRetriever(raw, sections, pages, embed)
-            _save_retriever(retriever, source_name, th)
-        except Exception as e:
-            return f"Indexing error: {e}"
+            doc_cache.save_retriever(retriever, source_name, th)
+        except Exception as exc:
+            logger.error("Indexing failed: %s", exc)
+            return f"Indexing error: {exc}"
 
     if "documents" not in st.session_state:
         st.session_state.documents = []
 
-    # Check if this source is already loaded — replace it rather than duplicate
+    # Replace existing entry rather than duplicate
     for i, doc in enumerate(st.session_state.documents):
         if doc["source_name"] == source_name:
             st.session_state.documents[i] = {

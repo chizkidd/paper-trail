@@ -1,8 +1,14 @@
+import logging
 from typing import List, Optional, Tuple
+
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+from papertrail import config
 from papertrail.retrieval.embedder import load_embedder
+
+logger = logging.getLogger(__name__)
 
 
 class DocRetriever:
@@ -20,12 +26,19 @@ class DocRetriever:
         self.embedder       = load_embedder()
         self.embeddings     = self.embedder.encode(texts, normalize_embeddings=True)
         self.vectorizer     = TfidfVectorizer(
-            ngram_range=(1,2), max_features=30000,
-            stop_words="english", sublinear_tf=True,
+            ngram_range=(1, 2),
+            max_features=config.TFIDF_MAX_FEATURES,
+            stop_words="english",
+            sublinear_tf=True,
         )
         self.matrix = self.vectorizer.fit_transform(texts)
 
-    def query(self, question: str, top_k: int = 60, alpha: float = 0.45) -> List[Tuple[str,float,int]]:
+    def query(
+        self,
+        question: str,
+        top_k: int = 60,
+        alpha: float = config.HYBRID_ALPHA,
+    ) -> List[Tuple[str, float, int]]:
         q_emb  = self.embedder.encode([question], normalize_embeddings=True)
         dense  = np.dot(self.embeddings, q_emb[0])
         sparse = cosine_similarity(self.vectorizer.transform([question]), self.matrix).flatten()
@@ -40,7 +53,7 @@ class DocRetriever:
         return [(self.chunks[i], float(scores[i]), int(i)) for i in top_idx]
 
     def score_sentences(self, question: str, sentences: List[str]) -> List[float]:
-        if not sentences: 
+        if not sentences:
             return []
         q_vec = self.vectorizer.transform([question])
         s_mat = self.vectorizer.transform(sentences)
@@ -50,8 +63,8 @@ class DocRetriever:
         section = self.chunk_sections[chunk_idx] if chunk_idx < len(self.chunk_sections) else ""
         page    = self.chunk_pages[chunk_idx]    if chunk_idx < len(self.chunk_pages)    else None
         parts   = []
-        if section:          
+        if section:
             parts.append(f"§ {section}")
-        if page is not None: 
+        if page is not None:
             parts.append(f"p. {page}")
         return "  ·  ".join(parts)

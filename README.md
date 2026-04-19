@@ -1,5 +1,7 @@
 # Papertrail
 
+![visitor badge](https://visitor-badge.laobi.icu/badge?page_id=chizkidd.paper-trail)
+
 _Ask questions. Get grounded answers from any document you bring._
 
 Papertrail is a lightweight **document question-answering agent** built with Streamlit. It indexes a document, retrieves relevant evidence, and produces grounded answers with clear attribution. No hidden training data. Every answer is derived from the document you load.

@@ -169,20 +169,15 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         focused = focused_supporting_fallback(best_chunk, answer_sents)
     focused = remove_display_latex_anywhere(as_text(focused))
 
-    attribution_html = (
-        f'<div class="attr-bar"><span class="attr-pill">{html.escape(attr_text)}</span></div>'
-        if attr_text else ""
-    )
-
     passages = [html.escape(f"{source_label.capitalize()}: {answer_text}")]
     if focused and normalize_ws(focused) != normalize_ws(answer_text):
         passages.append(html.escape(f"Supporting passage: {focused}"))
 
     answer_body = "</p><p>".join(passages)
     answer_html = (
-        f'<div class="msg-label">{source_label}</div>'
+        f'<div class="msg-label">{html.escape(source_label)}</div>'
         f"<p>{answer_body}</p>"
-        f'<span class="match-pill {css_class}">{label}</span>'
+        f'<span class="match-pill {html.escape(css_class)}">{html.escape(label)}</span>'
     )
 
     extras, seen = [], set()
@@ -195,4 +190,6 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         seen.add(key)
         extras.append((chunk, score))
 
-    return answer_html, answer_text, best_score, extras, attribution_html
+    # Return plain attr_text — callers build attribution HTML at render time
+    # so it is never stored as raw HTML in session state.
+    return answer_html, answer_text, best_score, extras, attr_text

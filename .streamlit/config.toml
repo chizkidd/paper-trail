@@ -1,0 +1,7 @@
+[server]
+enableCORS = false
+enableXsrfProtection = true
+
+[client]
+# Hide Python tracebacks from end users in production.
+showErrorDetails = false

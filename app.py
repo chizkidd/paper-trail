@@ -61,7 +61,14 @@ section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] span,
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] small,
 section[data-testid="stSidebar"] [data-testid="stFileUploader"] p,
-section[data-testid="stSidebar"] [data-testid="stFileUploader"] div { color: rgba(245,240,232,0.85) !important; }
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] div,
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] button,
+section[data-testid="stSidebar"] [data-testid="stFileUploaderFileName"] { color: rgba(245,240,232,0.85) !important; }
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] button {
+    background: rgba(255,255,255,0.12) !important;
+    border: 1px solid rgba(255,255,255,0.3) !important;
+    border-radius: 4px !important;
+}
 section[data-testid="stSidebar"] .stButton button {
     background: var(--accent) !important; color: white !important;
     border: none !important; border-radius: 6px !important;

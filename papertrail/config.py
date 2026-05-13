@@ -33,7 +33,7 @@ HF_TEMPERATURE    = 0.2
 # ── LLM — Ollama ──────────────────────────────────────────────────────────────
 
 OLLAMA_MODEL   = "llama3.1:8b"
-OLLAMA_URL     = "http://localhost:11434/api/generate"
+OLLAMA_URL     = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_TIMEOUT = 60   # seconds
 
 # ── Ingest ────────────────────────────────────────────────────────────────────

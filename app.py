@@ -5,8 +5,6 @@ import streamlit as st
 
 from papertrail import config
 from papertrail.ingest.pdf import load_pdf
-
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 from papertrail.ingest.web import load_url
 from papertrail.qa import (
     answer_question,
@@ -19,6 +17,8 @@ from papertrail.qa import (
 from papertrail.utils.text import clean_raw_passage
 from papertrail.utils.stream import stream_words_into_bubble
 
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Papertrail",
@@ -26,6 +26,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── Optional HF token from Streamlit secrets ───────────────────────────────────
+import papertrail.llm.hf as _hf_llm  # noqa: E402
+_hf_llm.HF_TOKEN = st.secrets.get("HF_TOKEN", None)
 
 # ── Styles ─────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -199,7 +203,7 @@ if source_type == "URL":
         url_val = st.text_input("URL", placeholder="https://example.com/article",
                                 label_visibility="collapsed", key="url_input")
     with col2:
-        fetch_clicked = st.button("Fetch", use_container_width=True)
+        fetch_clicked = st.button("Fetch", key="fetch_url", use_container_width=True)
 
     if fetch_clicked:
         if not url_val.strip():
@@ -262,8 +266,14 @@ if active_doc:
         else:
             st.markdown(f'<div class="msg-bot">{html.escape(msg.get("answer_text") or "")}</div>',
                         unsafe_allow_html=True)
-            if msg.get("attribution_html"):
-                st.markdown(msg["attribution_html"], unsafe_allow_html=True)
+            # Rebuild attribution HTML at render time from stored plain text (never raw HTML).
+            if msg.get("attr_text"):
+                attr_html = (
+                    f'<div class="attr-bar">'
+                    f'<span class="attr-pill">{html.escape(msg["attr_text"])}</span>'
+                    f'</div>'
+                )
+                st.markdown(attr_html, unsafe_allow_html=True)
             if msg.get("extras"):
                 with st.expander("Show supporting passages"):
                     for chunk, score in msg["extras"]:
@@ -284,28 +294,36 @@ if retriever:
             unsafe_allow_html=True,
         )
 
-        answer_html, answer_text, score, extras, attribution_html = \
+        # answer_question now returns plain attr_text as the 5th element.
+        answer_html, answer_text, score, extras, attr_text = \
             answer_question(retriever, q)
         typing_ph.empty()
 
         stream_words_into_bubble(answer_text, source_label="assistant")
 
-        if attribution_html:
-            st.markdown(attribution_html, unsafe_allow_html=True)
+        # Build attribution HTML at render time from plain text — never render stored HTML.
+        if attr_text:
+            attr_html = (
+                f'<div class="attr-bar">'
+                f'<span class="attr-pill">{html.escape(attr_text)}</span>'
+                f'</div>'
+            )
+            st.markdown(attr_html, unsafe_allow_html=True)
         if extras:
             with st.expander("Show supporting passages"):
                 for chunk, s in extras:
                     st.caption(f"score: {s:.3f}")
                     st.write(clean_raw_passage(chunk))
 
-        # Append to the active document's message history
-        active_doc = get_active_doc()
+        # Append to the active document's message history.
+        # Store only plain text — no raw HTML — in session state.
         if active_doc is not None:
             active_doc["messages"].append({"role": "user", "content": q})
             active_doc["messages"].append({
-                "role": "assistant", "content": answer_html,
-                "extras": extras, "attribution_html": attribution_html,
+                "role": "assistant",
                 "answer_text": answer_text,
+                "attr_text":   attr_text,
+                "extras":      extras,
             })
 
         st.markdown(

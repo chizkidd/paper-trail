@@ -79,7 +79,7 @@ ul[role="listbox"] li { color: var(--paper); }
 .chunk-count  { font-family: 'DM Mono', monospace; font-size: 0.7rem; color: var(--muted); }
 
 .msg-user  { background: var(--ink); color: var(--paper); border-radius: 12px 12px 4px 12px; padding: 0.75rem 1.1rem; margin: 0.75rem 0 0.75rem clamp(20px,10%,80px); font-size: 0.95rem; line-height: 1.5; word-break: break-word; }
-.msg-bot   { background: white; border: 1px solid var(--border); border-radius: 12px 12px 12px 4px; padding: 0.85rem 1.1rem; margin: 0.75rem clamp(20px,10%,80px) 0.75rem 0; font-size: 0.95rem; line-height: 1.65; box-shadow: 0 1px 4px rgba(0,0,0,0.05); word-break: break-word; }
+.msg-bot   { background: white; color: var(--ink); border: 1px solid var(--border); border-radius: 12px 12px 12px 4px; padding: 0.85rem 1.1rem; margin: 0.75rem clamp(20px,10%,80px) 0.75rem 0; font-size: 0.95rem; line-height: 1.65; box-shadow: 0 1px 4px rgba(0,0,0,0.05); word-break: break-word; }
 .msg-label { font-family: 'DM Mono', monospace; font-size: 0.68rem; color: var(--muted); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em; }
 
 .match-pill   { display: inline-block; font-family: 'DM Mono', monospace; font-size: 0.65rem; padding: 2px 7px; border-radius: 20px; margin-top: 0.5rem; letter-spacing: 0.04em; }

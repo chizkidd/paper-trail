@@ -1,7 +1,14 @@
+[theme]
+base = "light"
+primaryColor = "#c0392b"
+backgroundColor = "#f5f0e8"
+secondaryBackgroundColor = "#e8e3da"
+textColor = "#1a1a2e"
+font = "sans serif"
+
 [server]
 enableCORS = false
 enableXsrfProtection = true
 
 [client]
-# Hide Python tracebacks from end users in production.
 showErrorDetails = false

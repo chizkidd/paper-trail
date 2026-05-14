@@ -10,6 +10,8 @@ _SECTION_RE     = re.compile(
     r"""\b\d+(?:\.\d+)+\s+[^\n]{1,80}?(?=\n|\s{2,}|\s*[:\-]\s|\.(?:\s|$)|$)""",
     re.VERBOSE,
 )
+# Unicode math ranges: operators (∀–⋿), letterlike (℀–⅏), misc A (⟀–⟯), misc B (⦀–⧿), supplemental (⨀–⫿)
+_UNICODE_MATH_RE = re.compile(r"[∀-⋿℀-⅏⟀-⟯⦀-⧿⨀-⫿]")
 
 
 def as_text(x) -> str:
@@ -43,7 +45,7 @@ def match_label(score: float) -> Tuple[str, str]:
 
 def is_noise_sentence(s: str) -> bool:
     n = normalize_ws(s)
-    return not n or len(n) < 35 or bool(_LATEX_BLOCK_RE.match(n))
+    return not n or len(n) < 35 or bool(_LATEX_BLOCK_RE.match(n)) or _is_math_heavy(n)
 
 def strip_leading_display_latex(s: str) -> str:
     return _LATEX_LEAD_RE.sub("", s or "", count=1).strip()
@@ -52,15 +54,8 @@ def remove_display_latex_anywhere(s: str) -> str:
     return normalize_ws(_LATEX_ANY_RE.sub("", s or ""))
 
 def _is_math_heavy(line: str) -> bool:
-    """True when >40% of non-space chars are symbols — catches mangled PDF equations."""
-    stripped = re.sub(r"\s", "", line)
-    if len(stripped) < 10:
-        return False
-    symbol_count = sum(
-        1 for c in stripped
-        if not c.isalnum() and c not in ".,;:'\"-()/[]{}%$@#&*+=<>_~^`|\\?"
-    )
-    return symbol_count / len(stripped) > 0.40
+    """True when line contains Unicode math symbols — the reliable signal for mangled PDF equations."""
+    return bool(_UNICODE_MATH_RE.search(line))
 
 
 def clean_raw_passage(text: str, max_chars: int = 500) -> str:

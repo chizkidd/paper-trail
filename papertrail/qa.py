@@ -9,6 +9,7 @@ import html
 import logging
 from typing import Dict, List, Optional
 
+import numpy as np
 import streamlit as st
 
 from papertrail import cache as doc_cache
@@ -23,13 +24,29 @@ from papertrail.retrieval.mmr import (
 from papertrail.retrieval.evidence import build_evidence_pack, format_extractive_answer
 from papertrail.llm.hf import generate_answer_hf
 from papertrail.llm.ollama import generate_answer_ollama
-from papertrail.utils.text import as_text, match_label, normalize_ws, remove_display_latex_anywhere
+from papertrail.utils.text import (
+    as_text, is_noise_sentence, match_label,
+    normalize_ws, remove_display_latex_anywhere, split_sentences,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def _text_hash(text: str) -> str:
     return hashlib.md5(text.encode()).hexdigest()
+
+
+def _top_sents(embedder, chunk: str, q_emb, max_sents: int = 3) -> str:
+    """Return the top-N most question-relevant sentences from a chunk, in reading order."""
+    sents = [s for s in split_sentences(chunk) if not is_noise_sentence(s)]
+    if not sents:
+        return normalize_ws(chunk[:400])
+    if len(sents) <= max_sents:
+        return " ".join(sents)
+    s_emb = embedder.encode(sents, normalize_embeddings=True)
+    scores = np.dot(s_emb, q_emb[0])
+    top_idx = sorted(np.argsort(scores)[::-1][:max_sents].tolist())
+    return " ".join(sents[i] for i in top_idx)
 
 
 # ── Multi-document helpers ─────────────────────────────────────────────────────
@@ -180,6 +197,7 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         f'<span class="match-pill {html.escape(css_class)}">{html.escape(label)}</span>'
     )
 
+    q_emb = retriever.embedder.encode([question], normalize_embeddings=True)
     extras, seen = [], set()
     for chunk, score, _ in reranked[1:]:
         if score < 0.01:
@@ -188,7 +206,10 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         if key in seen:
             continue
         seen.add(key)
-        extras.append((chunk, score))
+        snippet = remove_display_latex_anywhere(
+            _top_sents(retriever.embedder, chunk, q_emb)
+        )
+        extras.append((snippet, score))
 
     # Return plain attr_text — callers build attribution HTML at render time
     # so it is never stored as raw HTML in session state.

@@ -51,19 +51,36 @@ def strip_leading_display_latex(s: str) -> str:
 def remove_display_latex_anywhere(s: str) -> str:
     return normalize_ws(_LATEX_ANY_RE.sub("", s or ""))
 
-def clean_raw_passage(text: str) -> str:
+def _is_math_heavy(line: str) -> bool:
+    """True when >40% of non-space chars are symbols — catches mangled PDF equations."""
+    stripped = re.sub(r"\s", "", line)
+    if len(stripped) < 10:
+        return False
+    symbol_count = sum(
+        1 for c in stripped
+        if not c.isalnum() and c not in ".,;:'\"-()/[]{}%$@#&*+=<>_~^`|\\?"
+    )
+    return symbol_count / len(stripped) > 0.40
+
+
+def clean_raw_passage(text: str, max_chars: int = 500) -> str:
     if not text:
         return ""
     text = _LATEX_ANY_RE.sub("", text)
     paras = [p.strip() for p in text.split("\n") if p.strip()]
     out = []
     for p in paras:
+        if _is_math_heavy(p):
+            continue
         p = _LABEL_RE.sub("", p)
         p = _SECTION_RE.sub("", p)
         p = normalize_ws(p)
         if p:
             out.append(p)
-    return "\n\n".join(out).strip()
+    result = "\n\n".join(out).strip()
+    if max_chars and len(result) > max_chars:
+        result = result[:max_chars].rsplit(" ", 1)[0] + "…"
+    return result
 
 def dedup_paragraphs(text: str) -> str:
     if not text:

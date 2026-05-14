@@ -40,7 +40,7 @@ def _top_sents(embedder, chunk: str, q_emb, max_sents: int = 3) -> str:
     """Return the top-N most question-relevant sentences from a chunk, in reading order."""
     sents = [s for s in split_sentences(chunk) if not is_noise_sentence(s)]
     if not sents:
-        return normalize_ws(chunk[:400])
+        return ""
     if len(sents) <= max_sents:
         return " ".join(sents)
     s_emb = embedder.encode(sents, normalize_embeddings=True)
@@ -209,7 +209,8 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         snippet = remove_display_latex_anywhere(
             _top_sents(retriever.embedder, chunk, q_emb)
         )
-        extras.append((snippet, score))
+        if snippet:
+            extras.append((snippet, score))
 
     # Return plain attr_text — callers build attribution HTML at render time
     # so it is never stored as raw HTML in session state.

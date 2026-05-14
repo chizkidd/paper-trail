@@ -118,6 +118,18 @@ class TestIsNoiseSentence:
     def test_latex_block_is_noise(self):
         assert is_noise_sentence(r"\[ x = \frac{1}{2} \]") is True
 
+    def test_unicode_math_star_is_noise(self):
+        # ∗ is U+2217 (Mathematical Operator) — appears in PDF math extractions
+        assert is_noise_sentence("C(G) = max D V (G, D) =Ex~pdata[log D∗ G(x)] + Ez~pz[log(1 −D∗ G(G(z)))]") is True
+
+    def test_unicode_math_minus_is_noise(self):
+        # − is U+2212, ∼ is U+223C
+        assert is_noise_sentence("At that point C(G) achieves the value −log 4 and pg ∼ pdata holds.") is True
+
+    def test_clean_prose_with_ascii_equals_not_noise(self):
+        # Plain ASCII math notation (no Unicode symbols) in an otherwise readable sentence
+        assert is_noise_sentence("The global minimum is achieved if and only if pg = pdata at convergence.") is False
+
 
 class TestStripLeadingDisplayLatex:
     def test_strips_leading_block(self):

@@ -45,6 +45,7 @@ st.markdown("""
 }
 html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; background: var(--paper); color: var(--ink); }
 .stApp { background: var(--paper); }
+.stMainBlockContainer { padding-bottom: 2rem !important; }
 
 section[data-testid="stSidebar"] { background: var(--ink); color: var(--paper); border-right: none; }
 section[data-testid="stSidebar"] p,

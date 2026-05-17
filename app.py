@@ -1,5 +1,6 @@
 import html
 import logging
+import re
 
 import streamlit as st
 
@@ -106,6 +107,17 @@ ul[role="listbox"] li { color: var(--paper); }
 </style>
 """, unsafe_allow_html=True)
 
+def _safe_md_to_html(text: str) -> str:
+    """Escape HTML then apply minimal markdown: bold, italic, inline code, line breaks."""
+    t = html.escape(text or "")
+    t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t, flags=re.DOTALL)
+    t = re.sub(r"\*([^\*\n]+?)\*", r"<em>\1</em>", t)
+    t = re.sub(r"`([^`]+?)`", r"<code>\1</code>", t)
+    t = re.sub(r"\n\n+", "</p><p>", t)
+    t = re.sub(r"\n", "<br>", t)
+    return t
+
+
 # ── Session state ──────────────────────────────────────────────────────────────
 for k, d in [
     ("documents",      []),
@@ -137,7 +149,17 @@ def _validate_session_state() -> None:
 
 _validate_session_state()
 
+# Warm up models on first page load so the first question has no cold-start delay.
+# @st.cache_resource makes these no-ops on every subsequent rerun.
+from papertrail.retrieval.embedder import load_embedder as _load_embedder  # noqa: E402
+from papertrail.retrieval.rerank   import load_cross_encoder as _load_ce    # noqa: E402
+with st.spinner("Warming up models (first load only)…"):
+    _load_embedder()
+    _load_ce()
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
+active_doc = get_active_doc()
+
 with st.sidebar:
     st.markdown("## 📄 Papertrail")
     st.markdown("Load a document, then ask it anything.")
@@ -164,19 +186,18 @@ with st.sidebar:
                     remove_document(i)
                     st.rerun()
         # ── Conversation actions ───────────────────────────────────────────────
-        _active = get_active_doc()
-        if _active and _active.get("messages"):
+        if active_doc and active_doc.get("messages"):
             _col1, _col2 = st.columns(2)
             with _col1:
                 if st.button("🗑 Clear chat", key="clear_chat", use_container_width=True):
-                    _active["messages"] = []
+                    active_doc["messages"] = []
                     st.rerun()
             with _col2:
-                _md = export_conversation_markdown(_active)
+                _md = export_conversation_markdown(active_doc)
                 st.download_button(
                     label="⬇ Export",
                     data=_md,
-                    file_name=f"papertrail_{_active['source_name'][:30]}.md",
+                    file_name=f"papertrail_{active_doc['source_name'][:30]}.md",
                     mime="text/markdown",
                     key="export_md",
                     use_container_width=True,
@@ -225,7 +246,6 @@ with st.sidebar:
                     st.rerun()
 
     # ── Active doc controls ────────────────────────────────────────────────────
-    active_doc = get_active_doc()
     if active_doc:
         st.markdown("---")
         st.caption(f"Active: {active_doc['source_name'][:40]}")
@@ -303,7 +323,6 @@ elif source_type == "Paste Text":
                 st.rerun()
 
 # ── Source badge ───────────────────────────────────────────────────────────────
-active_doc = get_active_doc()
 if active_doc:
     src = html.escape(active_doc["source_name"])
     st.markdown(
@@ -329,8 +348,10 @@ if active_doc:
             st.markdown(f'<div class="msg-user">{html.escape(msg.get("content",""))}</div>',
                         unsafe_allow_html=True)
         else:
-            st.markdown(f'<div class="msg-bot">{html.escape(msg.get("answer_text") or "")}</div>',
-                        unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="msg-bot"><p>{_safe_md_to_html(msg.get("answer_text") or "")}</p></div>',
+                unsafe_allow_html=True,
+            )
             # Rebuild attribution HTML at render time from stored plain text (never raw HTML).
             if msg.get("attr_text"):
                 attr_html = (

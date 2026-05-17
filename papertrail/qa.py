@@ -187,12 +187,13 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
 
     results_for_mmr = [(c, s) for c, s, _ in reranked]
     answer_sents, (sup_ci, sup_si), chunks_sents = extractive_answer_from_results(
-        retriever, question, results_for_mmr
+        retriever, question, results_for_mmr, q_emb=q_emb
     )
 
     evidence_pack = build_evidence_pack(
         retriever, reranked, question,
         max_chunks=4, max_sents_per_chunk=2, max_chars=1400,
+        q_emb=q_emb,
     )
     mode = st.session_state.get("answer_mode", "Hugging Face (best effort)")
 

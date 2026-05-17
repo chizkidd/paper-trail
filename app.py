@@ -137,6 +137,14 @@ def _validate_session_state() -> None:
 
 _validate_session_state()
 
+# Warm up models on first page load so the first question has no cold-start delay.
+# @st.cache_resource makes these no-ops on every subsequent rerun.
+from papertrail.retrieval.embedder import load_embedder as _load_embedder  # noqa: E402
+from papertrail.retrieval.rerank   import load_cross_encoder as _load_ce    # noqa: E402
+with st.spinner("Warming up models (first load only)…"):
+    _load_embedder()
+    _load_ce()
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📄 Papertrail")

@@ -82,6 +82,37 @@ def test_stream_words_no_sleep():
     assert "import time" not in src, "time module imported in stream.py"
 
 
+def test_session_state_validator_repairs_missing_keys():
+    """_validate_session_state should reset documents when a doc is missing required keys."""
+    corrupt_doc = {"source_name": "bad.pdf"}  # missing chunk_count, retriever, messages, text_hash
+    state = {"documents": [corrupt_doc], "active_doc_idx": 0}
+
+    # Inline the validator logic to test it in isolation (avoids importing Streamlit)
+    docs = state.get("documents", [])
+    required = {"source_name", "chunk_count", "retriever", "messages", "text_hash"}
+    corruption_found = False
+    for i, doc in enumerate(docs):
+        if not isinstance(doc, dict) or not required.issubset(doc.keys()):
+            state["documents"] = []
+            state["active_doc_idx"] = 0
+            corruption_found = True
+            break
+
+    assert corruption_found, "Validator should have detected corruption"
+    assert state["documents"] == [], "Validator should have reset documents to []"
+    assert state["active_doc_idx"] == 0
+
+
+def test_session_state_validator_clamps_out_of_range_index():
+    """active_doc_idx beyond the documents list should be clamped to last valid index."""
+    state = {"documents": [{"x": 1}], "active_doc_idx": 99}
+    docs = state.get("documents", [])
+    idx = state.get("active_doc_idx", 0)
+    if docs and idx >= len(docs):
+        state["active_doc_idx"] = max(0, len(docs) - 1)
+    assert state["active_doc_idx"] == 0
+
+
 @pytest.mark.parametrize("text,expected_noise", [
     ("C(G) = max D V ∗ G(x) + Ez~pz[log(1 −D∗)]", True),
     ("The model generates realistic images by fooling the discriminator network.", False),

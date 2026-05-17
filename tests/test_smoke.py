@@ -113,6 +113,25 @@ def test_session_state_validator_clamps_out_of_range_index():
     assert state["active_doc_idx"] == 0
 
 
+def test_build_knowledge_base_pure():
+    """build_knowledge_base must work without a Streamlit server running."""
+    from papertrail.qa import build_knowledge_base
+    err, docs, idx = build_knowledge_base("word " * 60, "unit-test-doc", documents=[])
+    assert isinstance(err, str)
+    assert isinstance(docs, list)
+    assert isinstance(idx, int)
+
+
+def test_remove_document_pure():
+    """remove_document must be callable without a Streamlit server running."""
+    from papertrail.qa import remove_document
+    fake = [{"source_name": "a"}, {"source_name": "b"}]
+    docs, idx = remove_document(0, fake, active_doc_idx=1)
+    assert len(docs) == 1
+    assert docs[0]["source_name"] == "b"
+    assert idx == 0
+
+
 @pytest.mark.parametrize("text,expected_noise", [
     ("C(G) = max D V ∗ G(x) + Ez~pz[log(1 −D∗)]", True),
     ("The model generates realistic images by fooling the discriminator network.", False),

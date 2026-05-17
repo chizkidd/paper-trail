@@ -13,10 +13,12 @@ def build_evidence_pack(
     max_chunks:         int = 4,
     max_sents_per_chunk:int = 2,
     max_chars:          int = 1400,
+    q_emb=None,
 ) -> str:
     lines: List[str] = []
     total = 0
-    q_emb = retriever.embedder.encode([question], normalize_embeddings=True)
+    if q_emb is None:
+        q_emb = retriever.embedder.encode([question], normalize_embeddings=True)
 
     for chunk, score, idx in reranked[:max_chunks]:
         if score < 0.01:

@@ -26,6 +26,7 @@ def select_pool_sentences_mmr(
     min_rel:    float = 0.2,
     lambda_div: float = 0.72,
     max_chars:  int   = 650,
+    q_emb=None,
 ) -> List[int]:
     cleaned, idx_map = [], []
     for i, s in enumerate(pool_sents):
@@ -38,7 +39,8 @@ def select_pool_sentences_mmr(
     if not cleaned:
         return []
 
-    q_emb = retriever.embedder.encode([question], normalize_embeddings=True)
+    if q_emb is None:
+        q_emb = retriever.embedder.encode([question], normalize_embeddings=True)
     s_emb = retriever.embedder.encode(cleaned,    normalize_embeddings=True)
     rel   = np.dot(s_emb, q_emb[0])
     sim   = np.dot(s_emb, s_emb.T)
@@ -70,10 +72,10 @@ def select_pool_sentences_mmr(
 
 
 def extractive_answer_from_results(
-    retriever: DocRetriever, question: str, results
+    retriever: DocRetriever, question: str, results, q_emb=None
 ) -> Tuple[List[str], Tuple, List]:
     pool_sents, meta, chunks_sents = build_sentence_pool(results, max_chunks=3)
-    chosen = select_pool_sentences_mmr(retriever, question, pool_sents)
+    chosen = select_pool_sentences_mmr(retriever, question, pool_sents, q_emb=q_emb)
 
     if not chosen:
         for s in split_sentences(results[0][0]):

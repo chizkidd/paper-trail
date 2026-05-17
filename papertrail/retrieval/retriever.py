@@ -22,9 +22,9 @@ class DocRetriever:
         self.chunks         = chunks
         self.chunk_sections = chunk_sections or [""] * len(chunks)
         self.chunk_pages    = chunk_pages    or [None] * len(chunks)
-        texts               = embed_chunks if embed_chunks is not None else chunks
-        self.embedder       = load_embedder()
-        self.embeddings     = self.embedder.encode(texts, normalize_embeddings=True)
+        texts           = embed_chunks if embed_chunks is not None else chunks
+        _embedder       = load_embedder()
+        self.embeddings = _embedder.encode(texts, normalize_embeddings=True)
         self.vectorizer     = TfidfVectorizer(
             ngram_range=(1, 2),
             max_features=config.TFIDF_MAX_FEATURES,
@@ -32,6 +32,10 @@ class DocRetriever:
             sublinear_tf=True,
         )
         self.matrix = self.vectorizer.fit_transform(texts)
+
+    @property
+    def embedder(self):
+        return load_embedder()
 
     def query(
         self,

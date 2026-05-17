@@ -1,16 +1,16 @@
 """
 Orchestrator. app.py calls answer_question() and build_knowledge_base().
-Multi-document: session state holds a list of indexed documents.
+Multi-document: callers manage the documents list and active_doc_idx; this
+module is pure Python with no Streamlit dependency.
 Persistence: each retriever is serialized to disk on creation and reloaded on startup.
 See papertrail/cache.py for the safe (pickle-free) serialization format.
 """
 import hashlib
 import html
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-import streamlit as st
 
 from papertrail import cache as doc_cache
 from papertrail.ingest.chunking import prepare_chunks
@@ -51,23 +51,25 @@ def _top_sents(embedder, chunk: str, q_emb, max_sents: int = 3) -> str:
 
 # ── Multi-document helpers ─────────────────────────────────────────────────────
 
-def get_documents() -> List[Dict]:
-    """Return the list of indexed documents from session state."""
-    return st.session_state.get("documents", [])
+def get_documents(documents: List[Dict]) -> List[Dict]:
+    """Return the documents list passed in by the caller."""
+    return documents
 
 
-def get_active_retriever() -> Optional[DocRetriever]:
-    docs = get_documents()
-    idx  = st.session_state.get("active_doc_idx", 0)
-    if not docs or idx >= len(docs):
+def get_active_retriever(
+    documents: List[Dict],
+    active_doc_idx: int = 0,
+) -> Optional[DocRetriever]:
+    if not documents or active_doc_idx >= len(documents):
         return None
-    return docs[idx]["retriever"]
+    return documents[active_doc_idx]["retriever"]
 
 
-def get_active_doc() -> Optional[Dict]:
-    docs = get_documents()
-    idx  = st.session_state.get("active_doc_idx", 0)
-    return docs[idx] if docs and idx < len(docs) else None
+def get_active_doc(
+    documents: List[Dict],
+    active_doc_idx: int = 0,
+) -> Optional[Dict]:
+    return documents[active_doc_idx] if documents and active_doc_idx < len(documents) else None
 
 
 # ── Knowledge base ─────────────────────────────────────────────────────────────
@@ -75,20 +77,21 @@ def get_active_doc() -> Optional[Dict]:
 def build_knowledge_base(
     text: str,
     source_name: str,
+    documents: List[Dict],
     section_map=None,
     page_map=None,
-) -> str:
+) -> Tuple[str, List[Dict], int]:
     """
-    Index text and append to the documents list.
-    Tries to load from disk cache first. Returns "" on success, error string on failure.
+    Index text and return an updated documents list.
+    Tries to load from disk cache first.
+    Returns (error_str, updated_docs, new_active_idx).
+    On success error_str is ""; on failure it contains the error message.
     """
     raw, sections, pages, embed = prepare_chunks(text, section_map, page_map)
     if len(raw) < 2:
-        return "Not enough text to index. Try a longer document."
+        return "Not enough text to index. Try a longer document.", documents, 0
 
     th = _text_hash(text)
-
-    # Try cache first
     retriever = doc_cache.load_retriever(source_name, th)
 
     if retriever is None:
@@ -97,43 +100,35 @@ def build_knowledge_base(
             doc_cache.save_retriever(retriever, source_name, th)
         except Exception as exc:
             logger.error("Indexing failed: %s", exc)
-            return f"Indexing error: {exc}"
+            return f"Indexing error: {exc}", documents, 0
 
-    if "documents" not in st.session_state:
-        st.session_state.documents = []
-
-    # Replace existing entry rather than duplicate
-    for i, doc in enumerate(st.session_state.documents):
-        if doc["source_name"] == source_name:
-            st.session_state.documents[i] = {
-                "source_name": source_name,
-                "chunk_count": len(raw),
-                "retriever":   retriever,
-                "messages":    [],
-                "text_hash":   th,
-            }
-            st.session_state.active_doc_idx = i
-            return ""
-
-    st.session_state.documents.append({
+    new_entry = {
         "source_name": source_name,
         "chunk_count": len(raw),
         "retriever":   retriever,
         "messages":    [],
         "text_hash":   th,
-    })
-    st.session_state.active_doc_idx = len(st.session_state.documents) - 1
-    return ""
+    }
+    docs = list(documents)
+    for i, doc in enumerate(docs):
+        if doc["source_name"] == source_name:
+            docs[i] = new_entry
+            return "", docs, i
+    docs.append(new_entry)
+    return "", docs, len(docs) - 1
 
 
-def remove_document(idx: int) -> None:
-    docs = st.session_state.get("documents", [])
+def remove_document(
+    idx: int,
+    documents: List[Dict],
+    active_doc_idx: int = 0,
+) -> Tuple[List[Dict], int]:
+    """Remove document at idx and return (updated_docs, new_active_idx)."""
+    docs = list(documents)
     if 0 <= idx < len(docs):
         docs.pop(idx)
-        st.session_state.documents = docs
-        active = st.session_state.get("active_doc_idx", 0)
-        if active >= len(docs):
-            st.session_state.active_doc_idx = max(0, len(docs) - 1)
+    new_idx = min(active_doc_idx, max(0, len(docs) - 1))
+    return docs, new_idx
 
 
 def export_conversation_markdown(doc: dict) -> str:
@@ -166,7 +161,11 @@ def export_conversation_markdown(doc: dict) -> str:
 
 # ── Answer pipeline ────────────────────────────────────────────────────────────
 
-def answer_question(retriever: DocRetriever, question: str) -> tuple:
+def answer_question(
+    retriever: DocRetriever,
+    question: str,
+    mode: str = "Hugging Face (best effort)",
+) -> tuple:
     """
     Full pipeline: hybrid retrieval → rerank → MMR extraction → optional generation.
     Returns (answer_html, answer_text, score, extras, attribution_html).
@@ -195,7 +194,7 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         max_chunks=4, max_sents_per_chunk=2, max_chars=1400,
         q_emb=q_emb,
     )
-    mode = st.session_state.get("answer_mode", "Hugging Face (best effort)")
+    # mode is passed in by the caller (app.py reads it from session state)
 
     generated, is_generated = "", False
     if mode == "Local (Ollama)":

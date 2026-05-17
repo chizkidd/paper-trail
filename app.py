@@ -158,7 +158,7 @@ with st.spinner("Warming up models (first load only)…"):
     _load_ce()
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
-active_doc = get_active_doc()
+active_doc = get_active_doc(st.session_state.documents, st.session_state.active_doc_idx)
 
 with st.sidebar:
     st.markdown("## 📄 Papertrail")
@@ -183,7 +183,11 @@ with st.sidebar:
                     st.rerun()
             with col_b:
                 if st.button("✕", key=f"doc_remove_{i}"):
-                    remove_document(i)
+                    new_docs, new_idx = remove_document(
+                        i, st.session_state.documents, st.session_state.active_doc_idx
+                    )
+                    st.session_state.documents      = new_docs
+                    st.session_state.active_doc_idx = new_idx
                     st.rerun()
         # ── Conversation actions ───────────────────────────────────────────────
         if active_doc and active_doc.get("messages"):
@@ -235,13 +239,16 @@ with st.sidebar:
                 if err:
                     st.info(err)  # non-fatal note (e.g. OCR used)
                 with st.spinner("Indexing..."):
-                    idx_err = build_knowledge_base(
+                    idx_err, new_docs, new_idx = build_knowledge_base(
                         text, st.session_state.pdf_name,
+                        st.session_state.documents,
                         section_map=section_map, page_map=page_map,
                     )
                 if idx_err:
                     st.error(idx_err)
                 else:
+                    st.session_state.documents      = new_docs
+                    st.session_state.active_doc_idx = new_idx
                     st.session_state.pdf_bytes = None
                     st.rerun()
 
@@ -301,10 +308,15 @@ if source_type == "URL":
                 st.info("Tip: copy the page text and use Paste Text instead.")
             else:
                 with st.spinner("Indexing..."):
-                    err = build_knowledge_base(text, url_val.strip(), section_map=section_map)
+                    err, new_docs, new_idx = build_knowledge_base(
+                        text, url_val.strip(), st.session_state.documents,
+                        section_map=section_map,
+                    )
                 if err:
                     st.error(err)
                 else:
+                    st.session_state.documents      = new_docs
+                    st.session_state.active_doc_idx = new_idx
                     st.rerun()
 
 elif source_type == "Paste Text":
@@ -316,10 +328,14 @@ elif source_type == "Paste Text":
             st.warning("Paste some text first.")
         else:
             with st.spinner("Indexing..."):
-                err = build_knowledge_base(pasted.strip(), "Pasted text")
+                err, new_docs, new_idx = build_knowledge_base(
+                    pasted.strip(), "Pasted text", st.session_state.documents
+                )
             if err:
                 st.error(err)
             else:
+                st.session_state.documents      = new_docs
+                st.session_state.active_doc_idx = new_idx
                 st.rerun()
 
 # ── Source badge ───────────────────────────────────────────────────────────────
@@ -332,7 +348,7 @@ if active_doc:
     )
 
 # ── Empty state ────────────────────────────────────────────────────────────────
-retriever = get_active_retriever()
+retriever = get_active_retriever(st.session_state.documents, st.session_state.active_doc_idx)
 if not retriever:
     msg = "Upload a PDF from the sidebar to begin." if source_type == "PDF Upload" \
           else "Load a document above to begin."
@@ -382,7 +398,7 @@ if retriever:
 
         try:
             answer_html, answer_text, score, extras, attr_text = \
-                answer_question(retriever, q)
+                answer_question(retriever, q, mode=st.session_state.answer_mode)
         except MemoryError:
             typing_ph.empty()
             st.error("Out of memory processing this question. Try a shorter document.")

@@ -38,8 +38,10 @@ class DocRetriever:
         question: str,
         top_k: int = 60,
         alpha: float = config.HYBRID_ALPHA,
+        q_emb=None,
     ) -> List[Tuple[str, float, int]]:
-        q_emb  = self.embedder.encode([question], normalize_embeddings=True)
+        if q_emb is None:
+            q_emb = self.embedder.encode([question], normalize_embeddings=True)
         dense  = np.dot(self.embeddings, q_emb[0])
         sparse = cosine_similarity(self.vectorizer.transform([question]), self.matrix).flatten()
 

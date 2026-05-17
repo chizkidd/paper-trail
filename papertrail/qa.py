@@ -136,6 +136,34 @@ def remove_document(idx: int) -> None:
             st.session_state.active_doc_idx = max(0, len(docs) - 1)
 
 
+def export_conversation_markdown(doc: dict) -> str:
+    """Serialize a document's Q&A history to a Markdown string."""
+    source = doc.get("source_name", "Document")
+    messages = doc.get("messages", [])
+    q_count = sum(1 for m in messages if m.get("role") == "user")
+    lines = [
+        f"# Papertrail Export: {source}",
+        "",
+        f"*{q_count} question{'s' if q_count != 1 else ''}*",
+        "",
+        "---",
+        "",
+    ]
+    for msg in messages:
+        role = msg.get("role", "")
+        if role == "user":
+            lines.append(f"**Q:** {msg.get('content', '').strip()}")
+            lines.append("")
+        elif role == "assistant":
+            lines.append(f"**A:** {msg.get('answer_text', '').strip()}")
+            if msg.get("attr_text"):
+                lines.append(f"*Source: {msg['attr_text']}*")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+    return "\n".join(lines)
+
+
 # ── Answer pipeline ────────────────────────────────────────────────────────────
 
 def answer_question(retriever: DocRetriever, question: str) -> tuple:
@@ -145,7 +173,8 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
     """
     n_chunks   = len(retriever.chunks)
     dynamic_k  = min(40, max(20, n_chunks // 5))
-    candidates = retriever.query(question, top_k=dynamic_k)
+    q_emb      = retriever.embedder.encode([question], normalize_embeddings=True)
+    candidates = retriever.query(question, top_k=dynamic_k, q_emb=q_emb)
     reranked   = rerank(question, candidates, top_k=5)
 
     if not reranked or reranked[0][1] < 0.01:
@@ -197,7 +226,6 @@ def answer_question(retriever: DocRetriever, question: str) -> tuple:
         f'<span class="match-pill {html.escape(css_class)}">{html.escape(label)}</span>'
     )
 
-    q_emb = retriever.embedder.encode([question], normalize_embeddings=True)
     extras, seen = [], set()
     for chunk, score, _ in reranked[1:]:
         if score < 0.01:

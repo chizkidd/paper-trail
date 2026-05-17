@@ -166,7 +166,7 @@ with st.sidebar:
     st.markdown("---")
 
     # ── Document list ──────────────────────────────────────────────────────────
-    docs = get_documents()
+    docs = get_documents(st.session_state.documents)
     if docs:
         st.markdown("**Documents**")
         for i, doc in enumerate(docs):

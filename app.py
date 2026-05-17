@@ -9,6 +9,7 @@ from papertrail.ingest.web import load_url
 from papertrail.qa import (
     answer_question,
     build_knowledge_base,
+    export_conversation_markdown,
     get_active_doc,
     get_active_retriever,
     get_documents,
@@ -116,6 +117,26 @@ for k, d in [
 ]:
     st.session_state.setdefault(k, d)
 
+
+def _validate_session_state() -> None:
+    docs = st.session_state.get("documents", [])
+    idx  = st.session_state.get("active_doc_idx", 0)
+    required = {"source_name", "chunk_count", "retriever", "messages", "text_hash"}
+    for i, doc in enumerate(docs):
+        if not isinstance(doc, dict) or not required.issubset(doc.keys()):
+            logging.getLogger(__name__).warning(
+                "Session state corruption at doc %d — resetting.", i
+            )
+            st.session_state.documents = []
+            st.session_state.active_doc_idx = 0
+            st.warning("Session was reset due to an inconsistency. Please reload your document.")
+            return
+    if docs and idx >= len(docs):
+        st.session_state.active_doc_idx = max(0, len(docs) - 1)
+
+
+_validate_session_state()
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📄 Papertrail")
@@ -142,6 +163,24 @@ with st.sidebar:
                 if st.button("✕", key=f"doc_remove_{i}"):
                     remove_document(i)
                     st.rerun()
+        # ── Conversation actions ───────────────────────────────────────────────
+        _active = get_active_doc()
+        if _active and _active.get("messages"):
+            _col1, _col2 = st.columns(2)
+            with _col1:
+                if st.button("🗑 Clear chat", key="clear_chat", use_container_width=True):
+                    _active["messages"] = []
+                    st.rerun()
+            with _col2:
+                _md = export_conversation_markdown(_active)
+                st.download_button(
+                    label="⬇ Export",
+                    data=_md,
+                    file_name=f"papertrail_{_active['source_name'][:30]}.md",
+                    mime="text/markdown",
+                    key="export_md",
+                    use_container_width=True,
+                )
         st.markdown("---")
 
     # ── Source selector ────────────────────────────────────────────────────────
@@ -199,6 +238,24 @@ with st.sidebar:
                 st.session_state.answer_mode
             ),
         )
+
+    # ── System status ──────────────────────────────────────────────────────────
+    with st.expander("System status", expanded=False):
+        import importlib as _il
+        import os as _os
+
+        def _model_status(label: str, module: str, fn: str) -> None:
+            try:
+                obj = getattr(_il.import_module(module), fn)()
+                st.success(f"{label}: {'ready' if obj is not None else 'loading...'}")
+            except Exception as _e:
+                st.error(f"{label}: {type(_e).__name__}")
+
+        _model_status("Embedder", "papertrail.retrieval.embedder", "load_embedder")
+        _model_status("Reranker", "papertrail.retrieval.rerank",   "load_cross_encoder")
+        _cache = config.CACHE_DIR
+        _n = len([f for f in _os.listdir(_cache) if f.endswith("_meta.json")]) if _os.path.isdir(_cache) else 0
+        st.info(f"Cache: {_n} document(s) on disk")
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown('<div class="doc-header">Papertrail</div>', unsafe_allow_html=True)
@@ -302,9 +359,22 @@ if retriever:
             unsafe_allow_html=True,
         )
 
-        # answer_question now returns plain attr_text as the 5th element.
-        answer_html, answer_text, score, extras, attr_text = \
-            answer_question(retriever, q)
+        try:
+            answer_html, answer_text, score, extras, attr_text = \
+                answer_question(retriever, q)
+        except MemoryError:
+            typing_ph.empty()
+            st.error("Out of memory processing this question. Try a shorter document.")
+            st.stop()
+        except Exception as _exc:
+            typing_ph.empty()
+            logging.getLogger(__name__).exception("Answer pipeline failed: %r", q)
+            st.error(
+                "Something went wrong answering that question. "
+                "Try rephrasing, or reload the document."
+            )
+            st.caption(f"Error detail: {type(_exc).__name__}: {_exc}")
+            st.stop()
         typing_ph.empty()
 
         stream_words_into_bubble(answer_text, source_label="assistant")

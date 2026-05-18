@@ -115,7 +115,7 @@ All tunable hyperparameters live in one file:
 EMBEDDING_MODEL    = "all-MiniLM-L6-v2"
 RERANKER_MODEL     = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 HYBRID_ALPHA       = 0.45
-TFIDF_MAX_FEATURES = 30_000
+TFIDF_MAX_FEATURES = 30000
 CHUNK_SIZE         = 800
 CHUNK_OVERLAP      = 30
 HF_MODEL           = "mistralai/Mistral-7B-Instruct-v0.2"

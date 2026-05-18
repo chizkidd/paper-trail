@@ -24,8 +24,8 @@ Papertrail is a lightweight **document question-answering agent** built with Str
 - **Conversation export**: download the full Q&A session as a Markdown file
 - **Clear chat**: reset the conversation without removing the indexed document
 - **Error boundaries**: friendly in-app error messages instead of raw Python tracebacks
-- **Thread-safe streaming**: batched word rendering with no `sleep()` calls — server thread never blocked
-- **Pickle-free disk cache**: embeddings and index persisted as JSON + `.npy` + `.npz` — no arbitrary code execution risk
+- **Thread-safe streaming**: batched word rendering with no `sleep()` calls, server thread never blocked
+- **Pickle-free disk cache**: embeddings and index persisted as JSON + `.npy` + `.npz`, no arbitrary code execution risk
 - **Crash-safe atomic writes**: cache files written via `.tmp` → `os.replace()` so a crash mid-write never corrupts the index
 
 ---
@@ -90,7 +90,7 @@ Maximal Marginal Relevance (MMR) selects a diverse set of high-relevance sentenc
 
 | Mode | Description |
 |------|-------------|
-| **Structured (no LLM)** | Grounded extractive answer — no hallucination, fully deterministic |
+| **Structured (no LLM)** | Grounded extractive answer; no hallucination, fully deterministic |
 | **Local (Ollama)** | Local LLM synthesis from retrieved evidence (`llama3.1:8b` by default) |
 | **Hugging Face** | Serverless Mistral-7B inference with extractive fallback |
 
@@ -127,13 +127,13 @@ CACHE_DIR          = ~/.papertrail_cache
 
 ### 9. Session Reliability
 
-**Model warm-up** — embedder and cross-encoder are loaded at app startup via `@st.cache_resource`. The first question sees no cold-start delay.
+**Model warm-up**: embedder and cross-encoder are loaded at app startup via `@st.cache_resource`. The first question sees no cold-start delay.
 
-**Session state validation** — `_validate_session_state()` runs on every render and repairs corrupt or missing document entries before any rendering occurs.
+**Session state validation**: `_validate_session_state()` runs on every render and repairs corrupt or missing document entries before any rendering occurs.
 
-**Error boundaries** — the answer pipeline is wrapped in a `try/except` block that catches `MemoryError` and general exceptions, showing a user-friendly message with an error detail caption instead of a raw traceback.
+**Error boundaries**: the answer pipeline is wrapped in a `try/except` block that catches `MemoryError` and general exceptions, showing a user-friendly message with an error detail caption instead of a raw traceback.
 
-**Pure-Python core** — `papertrail/qa.py` has no Streamlit dependency. All public functions (`get_documents`, `get_active_doc`, `get_active_retriever`, `build_knowledge_base`, `remove_document`, `answer_question`) accept plain Python arguments and return plain Python values. Session state is owned entirely by `app.py`, making the module importable and testable without a running Streamlit server.
+**Pure-Python core**: `papertrail/qa.py` has no Streamlit dependency. All public functions (`get_documents`, `get_active_doc`, `get_active_retriever`, `build_knowledge_base`, `remove_document`, `answer_question`) accept plain Python arguments and return plain Python values. Session state is owned entirely by `app.py`, making the module importable and testable without a running Streamlit server.
 
 ---
 
@@ -181,7 +181,7 @@ streamlit run app.py
 | Web scraping     | requests + BeautifulSoup       |
 | Local LLM        | Ollama                         |
 | Cache            | numpy `.npy`, scipy `.npz`, JSON (pickle-free) |
-| CI               | GitHub Actions — pytest, ruff, pip-audit |
+| CI               | GitHub Actions: pytest, ruff, pip-audit |
 
 ---
 
@@ -191,7 +191,7 @@ GitHub Actions runs three jobs on every push and pull request:
 
 | Job | What it checks |
 |-----|----------------|
-| **Test** | pytest — 86 tests across 6 files, Python 3.11 and 3.12 |
+| **Test** | pytest: 86 tests across 6 files, Python 3.11 and 3.12 |
 | **Lint** | ruff (`E`, `F`, `W` rules) |
 | **Security** | pip-audit dependency vulnerability scan |
 

@@ -8,7 +8,8 @@ from papertrail import config
 from papertrail.ingest.pdf import load_pdf
 from papertrail.ingest.web import load_url
 from papertrail.qa import (
-    answer_question,
+    answer_across_docs,
+    answer_question_stream,
     build_knowledge_base,
     export_conversation_markdown,
     get_active_doc,
@@ -16,6 +17,7 @@ from papertrail.qa import (
     get_documents,
     remove_document,
 )
+from papertrail.ingest.docx import load_docx
 from papertrail.utils.text import clean_raw_passage
 from papertrail.utils.stream import stream_words_into_bubble
 
@@ -126,6 +128,7 @@ for k, d in [
     ("answer_mode",    "Hugging Face (best effort)"),
     ("pdf_bytes",      None),
     ("pdf_name",       ""),
+    ("search_all",     False),
 ]:
     st.session_state.setdefault(k, d)
 
@@ -206,22 +209,26 @@ with st.sidebar:
                     key="export_md",
                     use_container_width=True,
                 )
+        if len(docs) > 1:
+            st.checkbox("Search all documents", key="search_all")
+        elif st.session_state.get("search_all"):
+            st.session_state.search_all = False
         st.markdown("---")
 
     # ── Source selector ────────────────────────────────────────────────────────
     st.radio(
         "Source",
-        ["URL", "PDF Upload", "Paste Text"],
+        ["URL", "Document Upload", "Paste Text"],
         key="source_type",
         label_visibility="collapsed",
     )
     source_type = st.session_state.source_type
 
-    if source_type == "PDF Upload":
+    if source_type == "Document Upload":
         limit_mb = config.PDF_MAX_BYTES // (1024 * 1024)
         uploaded = st.file_uploader(
-            f"Upload PDF (max {limit_mb} MB)",
-            type=["pdf"],
+            f"Upload PDF or DOCX (max {limit_mb} MB)",
+            type=["pdf", "docx"],
             label_visibility="collapsed",
         )
         if uploaded is not None:
@@ -230,9 +237,13 @@ with st.sidebar:
                 st.session_state.pdf_bytes = fb
                 st.session_state.pdf_name  = uploaded.name
 
-        if st.session_state.pdf_bytes and st.button("Build Knowledge Base", key="build_pdf"):
-            with st.spinner("Reading PDF..."):
-                text, section_map, page_map, err = load_pdf(st.session_state.pdf_bytes)
+        if st.session_state.pdf_bytes and st.button("Build Knowledge Base", key="build_doc"):
+            _ext = st.session_state.pdf_name.rsplit(".", 1)[-1].lower()
+            with st.spinner(f"Reading {'DOCX' if _ext == 'docx' else 'PDF'}..."):
+                if _ext == "docx":
+                    text, section_map, page_map, err = load_docx(st.session_state.pdf_bytes)
+                else:
+                    text, section_map, page_map, err = load_pdf(st.session_state.pdf_bytes)
             if err and not text:
                 st.error(err)
             else:
@@ -350,7 +361,7 @@ if active_doc:
 # ── Empty state ────────────────────────────────────────────────────────────────
 retriever = get_active_retriever(st.session_state.documents, st.session_state.active_doc_idx)
 if not retriever:
-    msg = "Upload a PDF from the sidebar to begin." if source_type == "PDF Upload" \
+    msg = "Upload a PDF or DOCX from the sidebar to begin." if source_type == "Document Upload" \
           else "Load a document above to begin."
     st.markdown(f'<div class="empty-state">{msg}</div>', unsafe_allow_html=True)
 elif not active_doc.get("messages"):
@@ -364,11 +375,19 @@ if active_doc:
             st.markdown(f'<div class="msg-user">{html.escape(msg.get("content",""))}</div>',
                         unsafe_allow_html=True)
         else:
+            _src = msg.get("source_label", "")
+            _src_html = f'<div class="msg-label">{html.escape(_src)}</div>' if _src else ""
             st.markdown(
-                f'<div class="msg-bot"><p>{_safe_md_to_html(msg.get("answer_text") or "")}</p></div>',
+                f'<div class="msg-bot">{_src_html}'
+                f'<p>{_safe_md_to_html(msg.get("answer_text") or "")}</p></div>',
                 unsafe_allow_html=True,
             )
-            # Rebuild attribution HTML at render time from stored plain text (never raw HTML).
+            if msg.get("match_lbl"):
+                st.markdown(
+                    f'<span class="match-pill {html.escape(msg.get("css_class", ""))}">'
+                    f'{html.escape(msg["match_lbl"])}</span>',
+                    unsafe_allow_html=True,
+                )
             if msg.get("attr_text"):
                 attr_html = (
                     f'<div class="attr-bar">'
@@ -397,8 +416,29 @@ if retriever:
         )
 
         try:
-            answer_html, answer_text, score, extras, attr_text = \
-                answer_question(retriever, q, mode=st.session_state.answer_mode)
+            if st.session_state.get("search_all") and len(st.session_state.documents) > 1:
+                _res = answer_across_docs(
+                    st.session_state.documents, q, mode=st.session_state.answer_mode
+                )
+                _text, focused, source_label, css_class, match_lbl, score, extras, attr_text = _res
+                typing_ph.empty()
+                answer_text = stream_words_into_bubble(_text, source_label=source_label)
+            else:
+                metadata, token_stream = answer_question_stream(
+                    retriever, q, mode=st.session_state.answer_mode
+                )
+                typing_ph.empty()
+                answer_text = stream_words_into_bubble(
+                    token_stream, source_label=metadata["source_label"]
+                )
+                if not answer_text.strip():
+                    answer_text = metadata["extractive_fallback"]
+                    answer_text = stream_words_into_bubble(answer_text, source_label="grounded answer")
+                source_label = metadata["source_label"]
+                css_class    = metadata["css_class"]
+                match_lbl    = metadata["match_lbl"]
+                attr_text    = metadata["attr_text"]
+                extras       = metadata["extras"]
         except MemoryError:
             typing_ph.empty()
             st.error("Out of memory processing this question. Try a shorter document.")
@@ -412,11 +452,14 @@ if retriever:
             )
             st.caption(f"Error detail: {type(_exc).__name__}: {_exc}")
             st.stop()
-        typing_ph.empty()
 
-        stream_words_into_bubble(answer_text, source_label="assistant")
+        if match_lbl:
+            st.markdown(
+                f'<span class="match-pill {html.escape(css_class)}">'
+                f'{html.escape(match_lbl)}</span>',
+                unsafe_allow_html=True,
+            )
 
-        # Build attribution HTML at render time from plain text — never render stored HTML.
         if attr_text:
             attr_html = (
                 f'<div class="attr-bar">'
@@ -430,15 +473,17 @@ if retriever:
                     st.caption(f"score: {s:.3f}")
                     st.write(clean_raw_passage(chunk))
 
-        # Append to the active document's message history.
         # Store only plain text — no raw HTML — in session state.
         if active_doc is not None:
             active_doc["messages"].append({"role": "user", "content": q})
             active_doc["messages"].append({
-                "role": "assistant",
-                "answer_text": answer_text,
-                "attr_text":   attr_text,
-                "extras":      extras,
+                "role":         "assistant",
+                "answer_text":  answer_text,
+                "attr_text":    attr_text,
+                "extras":       extras,
+                "source_label": source_label,
+                "css_class":    css_class,
+                "match_lbl":    match_lbl,
             })
 
         st.markdown(

@@ -1,6 +1,7 @@
+import json
 import logging
 import re
-from typing import Tuple
+from typing import Iterator, Tuple
 
 from papertrail import config
 
@@ -17,6 +18,43 @@ def _evidence_overlap_ratio(answer: str, evidence: str) -> float:
     a = re.findall(r"[a-zA-Z]{4,}", (answer or "").lower())
     e = set(re.findall(r"[a-zA-Z]{4,}", (evidence or "").lower()))
     return sum(1 for w in a if w in e) / max(1, len(a)) if a else 0.0
+
+
+def generate_answer_ollama_stream(question: str, evidence: str) -> Iterator[str]:
+    """Yield response tokens from the Ollama streaming API."""
+    if not _SUPPORT:
+        return
+    prompt = (
+        "You are a careful assistant. Use ONLY the evidence. Cite every claim using the bracket tags.\n"
+        'If insufficient, say: "I cannot determine this from the document."\n\n'
+        f"EVIDENCE:\n{evidence}\n\n"
+        f"QUESTION:\n{question}\n\n"
+        "ANSWER:"
+    )
+    try:
+        resp = requests.post(
+            config.OLLAMA_URL,
+            json={"model": config.OLLAMA_MODEL, "prompt": prompt, "stream": True},
+            timeout=config.OLLAMA_TIMEOUT,
+            stream=True,
+        )
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            token = data.get("response", "")
+            if token:
+                yield token
+            if data.get("done"):
+                break
+    except requests.exceptions.ConnectionError:
+        logger.debug("Ollama not reachable at %s.", config.OLLAMA_URL)
+    except Exception as exc:
+        logger.warning("Ollama stream error: %s", exc)
 
 
 def generate_answer_ollama(

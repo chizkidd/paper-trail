@@ -1,6 +1,7 @@
+import json
 import logging
 import re
-from typing import Tuple
+from typing import Iterator, Tuple
 
 from papertrail import config
 
@@ -20,6 +21,71 @@ def _evidence_overlap_ratio(answer: str, evidence: str) -> float:
     a = re.findall(r"[a-zA-Z]{4,}", (answer or "").lower())
     e = set(re.findall(r"[a-zA-Z]{4,}", (evidence or "").lower()))
     return sum(1 for w in a if w in e) / max(1, len(a)) if a else 0.0
+
+
+def generate_answer_hf_stream(question: str, context: str) -> Iterator[str]:
+    """Yield response tokens from the HF Inference API SSE stream."""
+    if not _SUPPORT:
+        return
+    prompt = (
+        "[INST] You are a careful assistant. Answer the QUESTION using ONLY the EVIDENCE below.\n"
+        'If the evidence is insufficient, say: "I cannot determine this from the document."\n\n'
+        "Rules:\n"
+        "- Write a direct answer first (1 to 3 sentences).\n"
+        '- Then add "Details" as bullet points if helpful.\n'
+        "- Every factual claim must include a citation in parentheses using the evidence tag,\n"
+        "  for example: (§ Methods · p. 3) or (Chunk: 12).\n"
+        "- Do not invent citations. Do not use outside knowledge.\n\n"
+        f"EVIDENCE:\n{context}\n\n"
+        f"QUESTION:\n{question} [/INST]"
+    )
+    headers = {"Content-Type": "application/json"}
+    if HF_TOKEN:
+        headers["Authorization"] = f"Bearer {HF_TOKEN}"
+    try:
+        resp = requests.post(
+            config.HF_API_URL,
+            headers=headers,
+            json={
+                "inputs": prompt,
+                "parameters": {
+                    "max_new_tokens":   config.HF_MAX_NEW_TOKENS,
+                    "temperature":      config.HF_TEMPERATURE,
+                    "do_sample":        False,
+                    "return_full_text": False,
+                },
+                "stream": True,
+            },
+            timeout=config.HF_TIMEOUT,
+            stream=True,
+        )
+        if resp.status_code in (503, 422):
+            logger.debug("HF API returned %d for streaming request.", resp.status_code)
+            return
+        resp.raise_for_status()
+        for raw_line in resp.iter_lines():
+            if not raw_line:
+                continue
+            line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+            if not line.startswith("data: "):
+                continue
+            payload = line[6:]
+            if payload == "[DONE]":
+                break
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            token_obj  = data.get("token", {})
+            token_text = token_obj.get("text", "")
+            if token_text and not token_obj.get("special", False):
+                yield token_text
+            if data.get("generated_text") is not None:
+                break
+    except requests.exceptions.Timeout:
+        logger.warning("HF API stream timed out after %ss.", config.HF_TIMEOUT)
+    except Exception as exc:
+        logger.warning("HF stream error: %s", exc)
 
 
 def generate_answer_hf(question: str, context: str) -> Tuple[str, bool]:

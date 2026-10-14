@@ -1,3 +1,14 @@
+---
+title: Papertrail
+emoji: 📄
+colorFrom: red
+colorTo: gray
+sdk: streamlit
+sdk_version: 1.35.0
+app_file: app.py
+pinned: false
+---
+
 # Papertrail
 
 ![visitor badge](https://visitor-badge.laobi.icu/badge?page_id=chizkidd.paper-trail)

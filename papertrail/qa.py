@@ -191,7 +191,7 @@ def answer_question(
 
     evidence_pack = build_evidence_pack(
         retriever, reranked, question,
-        max_chunks=4, max_sents_per_chunk=2, max_chars=1400,
+        max_chunks=4, max_sents_per_chunk=2, max_chars=3500,
         q_emb=q_emb,
     )
     # mode is passed in by the caller (app.py reads it from session state)

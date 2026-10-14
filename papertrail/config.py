@@ -20,7 +20,7 @@ TFIDF_MAX_FEATURES = 30_000
 # ── Chunking ───────────────────────────────────────────────────────────────────
 
 CHUNK_SIZE    = 800   # target chunk size in words
-CHUNK_OVERLAP = 30    # words of overlap between adjacent chunks
+CHUNK_OVERLAP = 100   # words of overlap between adjacent chunks
 
 # ── LLM — Hugging Face ────────────────────────────────────────────────────────
 

@@ -7,6 +7,9 @@ from papertrail.utils.text import (
 )
 
 
+_MIN_WORDS = 6
+
+
 def build_sentence_pool(results, max_chunks: int = 3):
     chunks_sents, pool_sents, meta = [], [], []
     for ci, (chunk, _) in enumerate(results[:max_chunks]):
@@ -22,10 +25,10 @@ def select_pool_sentences_mmr(
     retriever:  DocRetriever,
     question:   str,
     pool_sents: List[str],
-    k:          int   = 3,
+    k:          int   = 2,
     min_rel:    float = 0.2,
     lambda_div: float = 0.72,
-    max_chars:  int   = 650,
+    max_chars:  int   = 450,
     q_emb=None,
 ) -> List[int]:
     cleaned, idx_map = [], []
@@ -33,7 +36,7 @@ def select_pool_sentences_mmr(
         if is_noise_sentence(s):
             continue
         s2 = strip_leading_display_latex(s)
-        if s2:
+        if s2 and len(s2.split()) >= _MIN_WORDS:   # skip headings/fragments
             cleaned.append(s2)
             idx_map.append(i)
     if not cleaned:

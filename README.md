@@ -101,9 +101,13 @@ Maximal Marginal Relevance (MMR) selects a diverse set of high-relevance sentenc
 
 | Mode | Description |
 |------|-------------|
-| **Structured (no LLM)** | Grounded extractive answer; no hallucination, fully deterministic |
-| **Local (Ollama)** | Local LLM synthesis from retrieved evidence (`llama3.1:8b` by default) |
-| **Hugging Face** | Serverless Mistral-7B inference with extractive fallback |
+| **Document quotes** (default) | 1–2 sentences copied verbatim from the document; no LLM, no hallucination, deterministic |
+| **AI-written · Ollama** | Local LLM (`llama3.1:8b` by default) writes a short answer from the retrieved evidence |
+| **AI-written · Hugging Face** | Serverless Mistral-7B writes a short answer from the retrieved evidence |
+
+AI-written answers pass a faithfulness guard (`papertrail/llm/guard.py`): every sentence must match an evidence
+sentence by meaning (cosine ≥ 0.6) and by vocabulary (≥ 60% shared words). If any sentence fails, or the LLM is
+unreachable, the answer is replaced by the verbatim document quote.
 
 ### 7. Pickle-free Cache (`papertrail/cache.py`)
 

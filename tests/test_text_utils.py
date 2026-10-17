@@ -193,3 +193,25 @@ class TestExtractiveAnswerFormat:
     def test_empty_falls_back(self):
         from papertrail.retrieval.evidence import format_extractive_answer
         assert "cannot determine" in format_extractive_answer([], "x")
+
+
+def test_mmr_skips_fragments_and_caps_at_two():
+    import numpy as np
+    from papertrail.retrieval.mmr import select_pool_sentences_mmr
+
+    class _E:
+        def encode(self, sents, normalize_embeddings=True):
+            return np.ones((len(sents), 4)) / 2.0
+
+    class _R:
+        embedder = _E()
+
+    pool = [
+        "Token-Depth Vulnerability is a heading with no terminator here",   # 9 words, kept
+        "Too short fragment here.",                                          # < 6 words, skipped
+        "Aligned models are shallow and only affect early output tokens.",
+        "Data augmentation deepens refusal behaviour across the response.",
+    ]
+    chosen = select_pool_sentences_mmr(_R(), "q", pool, q_emb=np.ones((1, 4)) / 2.0)
+    assert 1 not in chosen
+    assert len(chosen) <= 2

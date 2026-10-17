@@ -6,15 +6,16 @@ import streamlit as st
 _STREAM_BATCH = 6  # render every N words/tokens — smooth UX without per-word DOM thrash
 
 
-def stream_words_into_bubble(text_or_iter: Union[str, Iterator[str]]) -> str:
+def stream_words_into_bubble(text_or_iter: Union[str, Iterator[str]], ph=None) -> str:
     """
     Render text into a chat bubble. Accepts a str (batch/replay mode) or an
     Iterator[str] of tokens (live streaming mode). Returns the full accumulated text.
+    Pass ph (an st.empty()) to render into an existing bubble, e.g. to replace it.
 
     Batches DOM updates every _STREAM_BATCH words/tokens — no sleep() calls —
     so the Streamlit server thread is never blocked.
     """
-    ph = st.empty()
+    ph = ph if ph is not None else st.empty()
     if isinstance(text_or_iter, str):
         tokens: Iterator[str] = iter((text_or_iter or "").split())
         join_space = True   # words need spaces re-inserted

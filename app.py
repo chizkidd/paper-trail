@@ -18,6 +18,7 @@ from papertrail.qa import (
     remove_document,
 )
 from papertrail.ingest.docx import load_docx
+from papertrail.llm.guard import clean_generated
 from papertrail.utils.text import clean_raw_passage
 from papertrail.utils.stream import stream_words_into_bubble
 
@@ -125,7 +126,7 @@ for k, d in [
     ("documents",      []),
     ("active_doc_idx", 0),
     ("source_type",    "URL"),
-    ("answer_mode",    "Hugging Face (best effort)"),
+    ("answer_mode",    config.MODE_QUOTES),
     ("pdf_bytes",      None),
     ("pdf_name",       ""),
     ("search_all",     False),
@@ -271,10 +272,10 @@ with st.sidebar:
 
         st.session_state.answer_mode = st.selectbox(
             "Answer mode",
-            ["Structured (no LLM)", "Local (Ollama)", "Hugging Face (best effort)"],
-            index=["Structured (no LLM)", "Local (Ollama)", "Hugging Face (best effort)"].index(
-                st.session_state.answer_mode
-            ),
+            config.ANSWER_MODES,
+            index=config.ANSWER_MODES.index(st.session_state.answer_mode),
+            help="Quotes are copied verbatim from your document. AI-written answers "
+                 "are checked against the document and replaced by a quote if unsupported.",
         )
 
     # ── System status ──────────────────────────────────────────────────────────
@@ -426,10 +427,19 @@ if retriever:
                     retriever, q, mode=st.session_state.answer_mode
                 )
                 typing_ph.empty()
-                answer_text = stream_words_into_bubble(token_stream)
-                if not answer_text.strip():
-                    answer_text = metadata["extractive_fallback"]
-                    answer_text = stream_words_into_bubble(answer_text)
+                bubble_ph = st.empty()
+                answer_text = stream_words_into_bubble(token_stream, ph=bubble_ph)
+                verify = metadata["verify"]
+                if not answer_text.strip() or (verify and not verify(answer_text)):
+                    # LLM unavailable, or its answer isn't supported by the document:
+                    # replace the bubble with the verbatim quote.
+                    answer_text = stream_words_into_bubble(
+                        metadata["extractive_fallback"], ph=bubble_ph
+                    )
+                else:
+                    cleaned = clean_generated(answer_text)
+                    if cleaned != answer_text:   # drop citation tags the model added anyway
+                        answer_text = stream_words_into_bubble(cleaned, ph=bubble_ph)
                 css_class    = metadata["css_class"]
                 match_lbl    = metadata["match_lbl"]
                 attr_text    = metadata["attr_text"]

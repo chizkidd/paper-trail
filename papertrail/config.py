@@ -22,6 +22,13 @@ TFIDF_MAX_FEATURES = 30_000
 CHUNK_SIZE    = 800   # target chunk size in words
 CHUNK_OVERLAP = 100   # words of overlap between adjacent chunks
 
+# ── Answer modes ──────────────────────────────────────────────────────────────
+
+MODE_QUOTES = "Document quotes (default)"
+MODE_OLLAMA = "AI-written · Ollama (may paraphrase)"
+MODE_HF     = "AI-written · Hugging Face (may paraphrase)"
+ANSWER_MODES = [MODE_QUOTES, MODE_OLLAMA, MODE_HF]
+
 # ── LLM — Hugging Face ────────────────────────────────────────────────────────
 
 HF_MODEL          = "mistralai/Mistral-7B-Instruct-v0.2"

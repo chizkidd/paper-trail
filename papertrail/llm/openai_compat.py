@@ -46,8 +46,12 @@ def stream_chat(
     model: str,
     token: Optional[str],
     provider: str,
+    extra: Optional[dict] = None,
 ) -> LLMStream:
-    """Stream tokens from an OpenAI-compatible /chat/completions endpoint."""
+    """Stream tokens from an OpenAI-compatible /chat/completions endpoint.
+
+    `extra` is merged into the request body (e.g. max_tokens, reasoning_effort).
+    """
 
     def source(st: LLMStream):
         if not token:
@@ -66,6 +70,7 @@ def stream_chat(
                     "max_tokens":  config.LLM_MAX_NEW_TOKENS,
                     "temperature": config.LLM_TEMPERATURE,
                     "stream":      True,
+                    **(extra or {}),
                 },
                 timeout=config.LLM_TIMEOUT,
                 stream=True,

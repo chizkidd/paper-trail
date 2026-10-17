@@ -149,13 +149,29 @@ def test_groq_retries_with_discovered_model(monkeypatch):
 
     monkeypatch.setattr(requests, "post", fake_post)
     monkeypatch.setattr(requests, "get", lambda *a, **k: _Json({"data": [
-        {"id": "whisper-large-v3"}, {"id": "llama-3.1-8b-instant"}, {"id": "llama-3.3-70b-versatile"},
+        {"id": "whisper-large-v3"}, {"id": "openai/gpt-oss-safeguard-20b"},
+        {"id": "llama-3.1-8b-instant"}, {"id": "llama-3.3-70b-versatile"},
     ]}))
     monkeypatch.setattr(groq.config, "GROQ_MODEL", "retired-model")
     s = groq.generate_answer_groq_stream("q", "ev")
     assert s.collect() == "fine" and s.status == base.OK
     assert models_used == ["retired-model", "llama-3.3-70b-versatile"]
     assert groq._discovered == "llama-3.3-70b-versatile"
+
+
+def test_groq_default_is_account_available_model_and_gpt_oss_gets_reasoning_budget(monkeypatch):
+    from papertrail import config
+    assert config.GROQ_MODEL == "openai/gpt-oss-20b"
+    seen = {}
+
+    def fake(url, **kw):
+        seen.update(kw["json"])
+        return _Resp(200, _sse("ok"))
+
+    monkeypatch.setattr(groq, "_discovered", None)
+    monkeypatch.setattr(requests, "post", fake)
+    groq.generate_answer_groq_stream("q", "ev").collect()
+    assert seen["reasoning_effort"] == "low" and seen["max_tokens"] >= 500
 
 
 def test_groq_unavailable_when_discovery_fails(monkeypatch):

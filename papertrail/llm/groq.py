@@ -15,13 +15,20 @@ GROQ_API_KEY: Optional[str] = None
 
 # Tried in order when the configured model is rejected; first one Groq actually serves wins.
 _FALLBACK_MODELS = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
     "openai/gpt-oss-20b",
     "openai/gpt-oss-120b",
-    "gemma2-9b-it",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "qwen/qwen3-32b",
 ]
-_NOT_CHAT = ("whisper", "guard", "tts", "playai", "embed", "orpheus")
+_NOT_CHAT = ("whisper", "guard", "safeguard", "tts", "playai", "embed", "orpheus", "allam")
+
+
+def _extra_for(model: str) -> dict:
+    """gpt-oss models spend tokens on hidden reasoning; keep it short and leave room for the answer."""
+    if model.startswith("openai/gpt-oss"):
+        return {"reasoning_effort": "low", "max_tokens": 800}
+    return {}
 
 _discovered: Optional[str] = None   # remembered for the life of the process
 
@@ -56,7 +63,7 @@ def generate_answer_groq_stream(question: str, context: str) -> LLMStream:
     def source(st: LLMStream):
         model = _discovered or config.GROQ_MODEL
         kw = dict(url=config.GROQ_API_URL, token=GROQ_API_KEY, provider="Groq")
-        inner = stream_chat(question, context, model=model, **kw)
+        inner = stream_chat(question, context, model=model, extra=_extra_for(model), **kw)
         produced = False
         for tok in inner:
             produced = True
@@ -67,7 +74,7 @@ def generate_answer_groq_stream(question: str, context: str) -> LLMStream:
         alt = discover_model(exclude=model)
         if not alt:
             return
-        retry = stream_chat(question, context, model=alt, **kw)
+        retry = stream_chat(question, context, model=alt, extra=_extra_for(alt), **kw)
         for tok in retry:
             yield tok
         st.status = retry.status

@@ -30,41 +30,15 @@ All notable changes to Papertrail are documented here.
 - Answer_html cleanup, .docx support, cross-doc search, true LLM streaming
 
 ### Other Changes
-- Edit app.py
-- Edit app.py
-- Edit app.py
-- Edit app.py and requirements.txt
-- Edit README
-- Edit README
-- Edit README
-- Edit README
-- Edit README
-- Improve retrieval and generation quality
-- Fix extractive sentence selection to use semantic similarity
-- Edit app.py
-- Add app.py
-- Edit app.py
-- Edit app.py (fixing retrieval stage)
-- Edit app.py
-- Edit app.py
-- Edit app.py
-- Streamline & clean up app.py
-- Update README with new improvements to app.py
-- Update README
-- Edit README
-- Edit README
-- Edit README
+- Initial app.py — iterative development of retrieval and generation pipeline
+- Improve retrieval and generation quality (chunk sizing, dynamic top_k, prompt rewrite, quality gate)
+- Fix extractive sentence selection to use semantic similarity over TF-IDF
+- Streamline and clean up app.py
+- Modularize codebase: split monolithic app.py into ingest, retrieval, LLM backends, and utilities packages
 - Move experimental files to /dev
-- Clean modularization: single app.py file into data ingestion, retrieval. LLM backends, utlilities folders
-- Edit files
-- Edit files
-- Edit files
-- Edit files
-- Edit app.py
-- Use newer streamlit version in requirments.txt
 - Fix invisible text in sidebar file uploader button and filename
-- Update README
-- Update README
+- Bump Streamlit version in requirements.txt
+- Update README across multiple iterations
 
 ### Refactoring
 - Q_emb pipeline, embedder property, dedup active_doc, markdown history

@@ -27,7 +27,7 @@ CHUNK_OVERLAP = 100   # words of overlap between adjacent chunks
 HF_MODEL          = "mistralai/Mistral-7B-Instruct-v0.2"
 HF_API_URL        = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
 HF_TIMEOUT        = 45   # seconds
-HF_MAX_NEW_TOKENS = 300
+HF_MAX_NEW_TOKENS = 150
 HF_TEMPERATURE    = 0.2
 
 # ── LLM — Ollama ──────────────────────────────────────────────────────────────

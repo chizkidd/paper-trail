@@ -20,17 +20,22 @@ def _evidence_overlap_ratio(answer: str, evidence: str) -> float:
     return sum(1 for w in a if w in e) / max(1, len(a)) if a else 0.0
 
 
-def generate_answer_ollama_stream(question: str, evidence: str) -> Iterator[str]:
-    """Yield response tokens from the Ollama streaming API."""
-    if not _SUPPORT:
-        return
-    prompt = (
-        "You are a careful assistant. Use ONLY the evidence. Cite every claim using the bracket tags.\n"
+def _build_prompt(question: str, evidence: str) -> str:
+    return (
+        "Answer the question using ONLY the evidence. Reply in 1 to 3 plain sentences: "
+        "no bullet points, no headings, no citations or bracket tags.\n"
         'If insufficient, say: "I cannot determine this from the document."\n\n'
         f"EVIDENCE:\n{evidence}\n\n"
         f"QUESTION:\n{question}\n\n"
         "ANSWER:"
     )
+
+
+def generate_answer_ollama_stream(question: str, evidence: str) -> Iterator[str]:
+    """Yield response tokens from the Ollama streaming API."""
+    if not _SUPPORT:
+        return
+    prompt = _build_prompt(question, evidence)
     try:
         resp = requests.post(
             config.OLLAMA_URL,
@@ -65,13 +70,7 @@ def generate_answer_ollama(
     if not _SUPPORT:
         return "", False
 
-    prompt = (
-        "You are a careful assistant. Use ONLY the evidence. Cite every claim using the bracket tags.\n"
-        'If insufficient, say: "I cannot determine this from the document."\n\n'
-        f"EVIDENCE:\n{evidence}\n\n"
-        f"QUESTION:\n{question}\n\n"
-        "ANSWER:"
-    )
+    prompt = _build_prompt(question, evidence)
 
     try:
         resp = requests.post(

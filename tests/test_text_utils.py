@@ -176,3 +176,20 @@ class TestDedupParagraphs:
         result = dedup_paragraphs(text)
         assert "first long paragraph" in result
         assert "second long paragraph" in result
+
+
+class TestExtractiveAnswerFormat:
+    def test_caps_sentences_and_drops_evidence_suffix(self):
+        from papertrail.retrieval.evidence import format_extractive_answer
+        out = format_extractive_answer(["One.", "Two.", "Three."], "§ Methods")
+        assert out == "One. Two."
+        assert "Evidence" not in out
+
+    def test_strips_footnote_markers(self):
+        from papertrail.retrieval.evidence import strip_footnote_markers
+        assert strip_footnote_markers("at greater depths.65 This prevents it.") == "at greater depths. This prevents it."
+        assert strip_footnote_markers("Scored 3.5 on v2 in 2024.") == "Scored 3.5 on v2 in 2024."
+
+    def test_empty_falls_back(self):
+        from papertrail.retrieval.evidence import format_extractive_answer
+        assert "cannot determine" in format_extractive_answer([], "x")

@@ -2,6 +2,27 @@
 
 All notable changes to Papertrail are documented here.
 
+## [Unreleased]
+
+### Features
+- Answers come from the document by default: new "Document quotes" mode returns 1-2 verbatim sentences, with no LLM and no network needed
+- Faithfulness guard for AI-written answers: every sentence must match the document by meaning and vocabulary, otherwise the quote is shown instead
+- Per-answer tag showing what actually produced the answer (`quote`, `AI-written`, or the fallback reason), saved with the message and included in the export
+- Groq free-tier AI mode (`GROQ_API_KEY`), with automatic model discovery if the configured model is rejected
+- Failure reasons for AI mode, e.g. no API key, key rejected, quota used up, model unavailable, timeout
+
+### Bug Fixes
+- Removed the misleading "generated/grounded answer" label, which was wrong whenever the fallback ran
+- DOCX: headings no longer leak into answers and superscript footnote numbers are dropped
+- Answers are capped at 2 sentences, with no inline `Evidence:` suffix and stray footnote digits stripped
+- Hugging Face backend moved from the retired `api-inference` endpoint to the Inference Providers router
+- Empty or rejected AI streams now replace the bubble in place instead of rendering a second one
+- Groq default model changed to `openai/gpt-oss-20b`, with token headroom for reasoning models
+
+### Refactoring
+- One shared OpenAI-compatible streaming client for Groq and Hugging Face
+- Answer-mode names centralised in `config.py`; non-stream LLM generators removed
+
 ## [0.1.0] - 2026-10-14
 
 ### Bug Fixes

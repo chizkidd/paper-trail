@@ -24,6 +24,7 @@ from papertrail.retrieval.mmr import (
 from papertrail.retrieval.evidence import build_evidence_pack, format_extractive_answer
 from papertrail.llm.guard import clean_generated, is_supported
 from papertrail.llm.base import OK
+from papertrail.llm.groq import generate_answer_groq_stream
 from papertrail.llm.hf import generate_answer_hf_stream
 from papertrail.llm.ollama import generate_answer_ollama_stream
 from papertrail.utils.text import (
@@ -49,13 +50,21 @@ def answer_origin(mode: str, produced: bool, supported: bool, reason: str = "") 
     return ORIGIN_AI if supported else ORIGIN_UNSUPPORTED
 
 
+def _llm_stream(mode: str, question: str, evidence_pack: str):
+    """The LLMStream for an AI-written mode, or None for Document quotes."""
+    if mode == config.MODE_GROQ:
+        return generate_answer_groq_stream(question, evidence_pack)
+    if mode == config.MODE_HF:
+        return generate_answer_hf_stream(question, evidence_pack)
+    if mode == config.MODE_OLLAMA:
+        return generate_answer_ollama_stream(question, evidence_pack)
+    return None
+
+
 def _generate(mode: str, question: str, evidence_pack: str) -> Tuple[str, str]:
     """Run the selected LLM to completion. Returns (text, status); text is '' on failure."""
-    if mode == config.MODE_OLLAMA:
-        stream = generate_answer_ollama_stream(question, evidence_pack)
-    elif mode == config.MODE_HF:
-        stream = generate_answer_hf_stream(question, evidence_pack)
-    else:
+    stream = _llm_stream(mode, question, evidence_pack)
+    if stream is None:
         return "", OK
     text = stream.collect()
     return text, stream.status
@@ -327,12 +336,8 @@ def answer_question_stream(
         if snippet:
             extras.append((snippet, score))
 
-    if mode == config.MODE_OLLAMA:
-        token_stream: Iterator[str] = generate_answer_ollama_stream(question, evidence_pack)
-    elif mode == config.MODE_HF:
-        token_stream = generate_answer_hf_stream(question, evidence_pack)
-    else:
-        token_stream = iter([extractive])
+    llm_stream = _llm_stream(mode, question, evidence_pack)
+    token_stream: Iterator[str] = llm_stream if llm_stream is not None else iter([extractive])
     source_label = ORIGIN_QUOTE if mode == config.MODE_QUOTES else ORIGIN_AI
 
     metadata: dict = {
@@ -346,7 +351,7 @@ def answer_question_stream(
         "extractive_fallback": extractive,
         "mode":                mode,
         # LLMStream (has .status after iteration) in AI modes, else None
-        "llm":                 token_stream if mode != config.MODE_QUOTES else None,
+        "llm":                 llm_stream,
         # None in quote mode; else callable(text) -> bool run after streaming finishes.
         "verify": (
             None if mode == config.MODE_QUOTES

@@ -102,6 +102,7 @@ Maximal Marginal Relevance (MMR) selects a diverse set of high-relevance sentenc
 | Mode | Description |
 |------|-------------|
 | **Document quotes** (default) | 1–2 sentences copied verbatim from the document; no LLM, no hallucination, deterministic |
+| **AI-written · Groq** | Groq's free tier (`llama-3.1-8b-instant` by default) writes a short answer; needs `GROQ_API_KEY` |
 | **AI-written · Ollama** | Local LLM (`llama3.1:8b` by default) writes a short answer from the retrieved evidence |
 | **AI-written · Hugging Face** | Serverless Mistral-7B writes a short answer from the retrieved evidence |
 
@@ -158,6 +159,16 @@ CACHE_DIR          = ~/.papertrail_cache
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+The **AI-written · Groq** mode is the easiest free option: create a key at
+[console.groq.com](https://console.groq.com) and add it to `.streamlit/secrets.toml` (or the app's Secrets):
+
+```toml
+GROQ_API_KEY = "gsk_..."
+```
+
+Override the model with the `GROQ_MODEL` env var. Free tiers are rate limited; when the quota is hit the answer tag
+says so and the answer falls back to a document quote.
 
 The **AI-written · Hugging Face** mode calls the Hugging Face Inference Providers router
 (`router.huggingface.co`) and **requires** a token with the *Make calls to Inference Providers*

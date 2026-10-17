@@ -36,6 +36,8 @@ st.set_page_config(
 # ── Optional HF token from Streamlit secrets ───────────────────────────────────
 import papertrail.llm.hf as _hf_llm  # noqa: E402
 _hf_llm.HF_TOKEN = st.secrets.get("HF_TOKEN", None)
+import papertrail.llm.groq as _groq_llm  # noqa: E402
+_groq_llm.GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", None)
 
 # ── Styles ─────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -284,7 +286,10 @@ with st.sidebar:
             help="Quotes are copied verbatim from your document. AI-written answers "
                  "are checked against the document and replaced by a quote if unsupported.",
         )
-        if st.session_state.answer_mode == config.MODE_HF and not _hf_llm.HF_TOKEN:
+        if st.session_state.answer_mode == config.MODE_GROQ and not _groq_llm.GROQ_API_KEY:
+            st.warning("Groq mode needs a GROQ_API_KEY in this app's secrets (free at console.groq.com). "
+                       "Answers will fall back to quotes.")
+        elif st.session_state.answer_mode == config.MODE_HF and not _hf_llm.HF_TOKEN:
             st.warning("Hugging Face mode needs an HF_TOKEN in this app's secrets "
                        "(with Inference Providers permission). Answers will fall back to quotes.")
         elif st.session_state.answer_mode == config.MODE_OLLAMA and "localhost" in config.OLLAMA_URL:

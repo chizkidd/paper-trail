@@ -2,10 +2,10 @@
 from typing import Callable, Iterator
 
 OK            = "ok"
-NO_TOKEN      = "no HF token configured"
-AUTH          = "HF token rejected or lacks Inference Providers permission"
-UNAVAILABLE   = "model not available on the HF router"
-RATE_LIMITED  = "HF free credits used up or rate limited"
+NO_TOKEN      = "no API key configured"
+AUTH          = "API key rejected (or lacks permission)"
+UNAVAILABLE   = "model not available from this provider"
+RATE_LIMITED  = "free quota used up or rate limited"
 TIMEOUT       = "request timed out"
 NOT_REACHABLE = "Ollama not reachable"
 EMPTY         = "model returned no text"

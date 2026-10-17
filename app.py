@@ -284,6 +284,11 @@ with st.sidebar:
             help="Quotes are copied verbatim from your document. AI-written answers "
                  "are checked against the document and replaced by a quote if unsupported.",
         )
+        if st.session_state.answer_mode == config.MODE_HF and not _hf_llm.HF_TOKEN:
+            st.warning("Hugging Face mode needs an HF_TOKEN in this app's secrets "
+                       "(with Inference Providers permission). Answers will fall back to quotes.")
+        elif st.session_state.answer_mode == config.MODE_OLLAMA and "localhost" in config.OLLAMA_URL:
+            st.caption("Ollama only works when the app runs on a machine with Ollama running.")
 
     # ── System status ──────────────────────────────────────────────────────────
     with st.expander("System status", expanded=False):
@@ -440,7 +445,9 @@ if retriever:
                 verify = metadata["verify"]
                 if not answer_text.strip():
                     # LLM unavailable: show the verbatim quote instead.
-                    origin = answer_origin(metadata["mode"], False, False)
+                    origin = answer_origin(
+                        metadata["mode"], False, False, getattr(metadata["llm"], "status", "")
+                    )
                     answer_text = stream_words_into_bubble(
                         metadata["extractive_fallback"], ph=bubble_ph
                     )

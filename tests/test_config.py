@@ -27,7 +27,8 @@ def test_ollama_timeout_positive():
 
 
 def test_hf_api_url_contains_model():
-    assert config.HF_MODEL in config.HF_API_URL
+    assert config.HF_API_URL.startswith("https://router.huggingface.co/")
+    assert config.HF_MODEL
 
 
 def test_tfidf_max_features_positive():

@@ -2,7 +2,7 @@
 
 All notable changes to Papertrail are documented here.
 
-## [Unreleased]
+## [0.2.0] - 2026-10-17
 
 ### Features
 - Answers come from the document by default: new "Document quotes" mode returns 1-2 verbatim sentences, with no LLM and no network needed

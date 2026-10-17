@@ -33,6 +33,21 @@ from papertrail.utils.text import (
 logger = logging.getLogger(__name__)
 
 
+ORIGIN_QUOTE       = "quote"
+ORIGIN_AI          = "AI-written"
+ORIGIN_UNSUPPORTED = "quote · AI answer not supported by document"
+ORIGIN_UNAVAILABLE = "quote · AI unavailable"
+
+
+def answer_origin(mode: str, produced: bool, supported: bool) -> str:
+    """What actually produced the shown answer (not merely which mode was selected)."""
+    if mode == config.MODE_QUOTES:
+        return ORIGIN_QUOTE
+    if not produced:
+        return ORIGIN_UNAVAILABLE
+    return ORIGIN_AI if supported else ORIGIN_UNSUPPORTED
+
+
 def _text_hash(text: str) -> str:
     return hashlib.md5(text.encode()).hexdigest()
 
@@ -154,6 +169,8 @@ def export_conversation_markdown(doc: dict) -> str:
             lines.append(f"**A:** {msg.get('answer_text', '').strip()}")
             if msg.get("attr_text"):
                 lines.append(f"*Source: {msg['attr_text']}*")
+            if msg.get("origin"):
+                lines.append(f"*Answer type: {msg['origin']}*")
             lines.append("")
             lines.append("---")
             lines.append("")
@@ -169,7 +186,7 @@ def answer_question(
 ) -> tuple:
     """
     Full pipeline: hybrid retrieval → rerank → MMR extraction → optional generation.
-    Returns (answer_text, focused, source_label, css_class, match_lbl, score, extras, attr_text).
+    Returns (answer_text, focused, origin, css_class, match_lbl, score, extras, attr_text).
     All values are plain Python — no HTML.
     """
     n_chunks   = len(retriever.chunks)
@@ -180,7 +197,7 @@ def answer_question(
 
     if not reranked or reranked[0][1] < 0.01:
         msg = "Nothing relevant found. Try rephrasing using keywords from the document."
-        return msg, "", "no result", "", "", 0.0, [], ""
+        return msg, "", "", "", "", 0.0, [], ""
 
     best_chunk, best_score, best_idx = reranked[0]
     match_lbl, css_class = match_label(best_score)
@@ -203,12 +220,12 @@ def answer_question(
     elif mode == config.MODE_HF:
         generated, is_generated = generate_answer_hf(question, evidence_pack)
 
-    if is_generated and is_supported(generated, evidence_pack, retriever.embedder):
-        answer_text  = remove_display_latex_anywhere(clean_generated(as_text(generated)))
-        source_label = "generated answer"
+    supported = is_generated and is_supported(generated, evidence_pack, retriever.embedder)
+    source_label = answer_origin(mode, is_generated, supported)
+    if supported:
+        answer_text = remove_display_latex_anywhere(clean_generated(as_text(generated)))
     else:
-        answer_text  = remove_display_latex_anywhere(format_extractive_answer(answer_sents, attr_text))
-        source_label = "grounded answer"
+        answer_text = remove_display_latex_anywhere(format_extractive_answer(answer_sents, attr_text))
 
     if sup_si is not None:
         focused = focused_supporting_from_indices(chunks_sents, sup_ci, sup_si)
@@ -255,7 +272,7 @@ def answer_question_stream(
     _empty: dict = {
         "attr_text": "", "extras": [], "score": 0.0,
         "css_class": "", "match_lbl": "", "focused": "",
-        "source_label": "no result", "extractive_fallback": "", "verify": None,
+        "source_label": "", "extractive_fallback": "", "verify": None, "mode": mode,
     }
     if not reranked or reranked[0][1] < 0.01:
         msg = "Nothing relevant found. Try rephrasing using keywords from the document."
@@ -302,13 +319,11 @@ def answer_question_stream(
 
     if mode == config.MODE_OLLAMA:
         token_stream: Iterator[str] = generate_answer_ollama_stream(question, evidence_pack)
-        source_label = "generated answer"
     elif mode == config.MODE_HF:
         token_stream = generate_answer_hf_stream(question, evidence_pack)
-        source_label = "generated answer"
     else:
         token_stream = iter([extractive])
-        source_label = "grounded answer"
+    source_label = ORIGIN_QUOTE if mode == config.MODE_QUOTES else ORIGIN_AI
 
     metadata: dict = {
         "attr_text":           attr_text,
@@ -319,6 +334,7 @@ def answer_question_stream(
         "focused":             focused,
         "source_label":        source_label,
         "extractive_fallback": extractive,
+        "mode":                mode,
         # None in quote mode; else callable(text) -> bool run after streaming finishes.
         "verify": (
             None if mode == config.MODE_QUOTES
@@ -339,7 +355,7 @@ def answer_across_docs(
     """
     if not documents:
         msg = "No documents loaded."
-        return msg, "", "no result", "", "", 0.0, [], ""
+        return msg, "", "", "", "", 0.0, [], ""
 
     embedder = documents[0]["retriever"].embedder
     q_emb    = embedder.encode([question], normalize_embeddings=True)
@@ -355,7 +371,7 @@ def answer_across_docs(
 
     if not all_candidates:
         msg = "Nothing relevant found across any loaded document."
-        return msg, "", "no result", "", "", 0.0, [], ""
+        return msg, "", "", "", "", 0.0, [], ""
 
     # Cross-encoder reranks the merged pool (inter-doc comparable joint scores)
     rerank_input = [(chunk, score, idx) for chunk, score, idx, _, _ in all_candidates]
@@ -363,7 +379,7 @@ def answer_across_docs(
 
     if not reranked or reranked[0][1] < 0.01:
         msg = "Nothing relevant found. Try rephrasing using keywords from the documents."
-        return msg, "", "no result", "", "", 0.0, [], ""
+        return msg, "", "", "", "", 0.0, [], ""
 
     # Map chunk text → (retriever, chunk_idx, doc_name); first occurrence wins on collision
     chunk_to_src: Dict[str, tuple] = {}
@@ -397,12 +413,12 @@ def answer_across_docs(
     elif mode == config.MODE_HF:
         generated, is_generated = generate_answer_hf(question, evidence_pack)
 
-    if is_generated and is_supported(generated, evidence_pack, best_retriever.embedder):
-        answer_text  = remove_display_latex_anywhere(clean_generated(as_text(generated)))
-        source_label = "generated answer"
+    supported = is_generated and is_supported(generated, evidence_pack, best_retriever.embedder)
+    source_label = answer_origin(mode, is_generated, supported)
+    if supported:
+        answer_text = remove_display_latex_anywhere(clean_generated(as_text(generated)))
     else:
-        answer_text  = remove_display_latex_anywhere(format_extractive_answer(answer_sents, attr_text))
-        source_label = "grounded answer"
+        answer_text = remove_display_latex_anywhere(format_extractive_answer(answer_sents, attr_text))
 
     if sup_si is not None:
         focused = focused_supporting_from_indices(chunks_sents, sup_ci, sup_si)

@@ -9,6 +9,7 @@ from papertrail.ingest.pdf import load_pdf
 from papertrail.ingest.web import load_url
 from papertrail.qa import (
     answer_across_docs,
+    answer_origin,
     answer_question_stream,
     build_knowledge_base,
     export_conversation_markdown,
@@ -119,6 +120,12 @@ def _safe_md_to_html(text: str) -> str:
     t = re.sub(r"\n\n+", "</p><p>", t)
     t = re.sub(r"\n", "<br>", t)
     return t
+
+
+def _render_origin(origin: str) -> None:
+    """Small tag under an answer saying what actually produced it."""
+    if origin:
+        st.markdown(f'<div class="msg-label">{html.escape(origin)}</div>', unsafe_allow_html=True)
 
 
 # ── Session state ──────────────────────────────────────────────────────────────
@@ -381,6 +388,7 @@ if active_doc:
                 f'<p>{_safe_md_to_html(msg.get("answer_text") or "")}</p></div>',
                 unsafe_allow_html=True,
             )
+            _render_origin(msg.get("origin", ""))
             if msg.get("match_lbl"):
                 st.markdown(
                     f'<span class="match-pill {html.escape(msg.get("css_class", ""))}">'
@@ -419,7 +427,7 @@ if retriever:
                 _res = answer_across_docs(
                     st.session_state.documents, q, mode=st.session_state.answer_mode
                 )
-                _text, focused, _label, css_class, match_lbl, score, extras, attr_text = _res
+                _text, focused, origin, css_class, match_lbl, score, extras, attr_text = _res
                 typing_ph.empty()
                 answer_text = stream_words_into_bubble(_text)
             else:
@@ -430,13 +438,20 @@ if retriever:
                 bubble_ph = st.empty()
                 answer_text = stream_words_into_bubble(token_stream, ph=bubble_ph)
                 verify = metadata["verify"]
-                if not answer_text.strip() or (verify and not verify(answer_text)):
-                    # LLM unavailable, or its answer isn't supported by the document:
-                    # replace the bubble with the verbatim quote.
+                if not answer_text.strip():
+                    # LLM unavailable: show the verbatim quote instead.
+                    origin = answer_origin(metadata["mode"], False, False)
+                    answer_text = stream_words_into_bubble(
+                        metadata["extractive_fallback"], ph=bubble_ph
+                    )
+                elif verify and not verify(answer_text):
+                    # AI answer isn't supported by the document: replace with the quote.
+                    origin = answer_origin(metadata["mode"], True, False)
                     answer_text = stream_words_into_bubble(
                         metadata["extractive_fallback"], ph=bubble_ph
                     )
                 else:
+                    origin = metadata["source_label"]
                     cleaned = clean_generated(answer_text)
                     if cleaned != answer_text:   # drop citation tags the model added anyway
                         answer_text = stream_words_into_bubble(cleaned, ph=bubble_ph)
@@ -458,6 +473,7 @@ if retriever:
             st.caption(f"Error detail: {type(_exc).__name__}: {_exc}")
             st.stop()
 
+        _render_origin(origin)
         if match_lbl:
             st.markdown(
                 f'<span class="match-pill {html.escape(css_class)}">'
@@ -485,6 +501,7 @@ if retriever:
                 "role":         "assistant",
                 "answer_text":  answer_text,
                 "attr_text":    attr_text,
+                "origin":       origin,
                 "extras":       extras,
                 "css_class":    css_class,
                 "match_lbl":    match_lbl,

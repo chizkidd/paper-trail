@@ -141,3 +141,20 @@ def test_remove_document_pure():
 def test_noise_sentence_parametrized(text, expected_noise):
     from papertrail.utils.text import is_noise_sentence
     assert is_noise_sentence(text) is expected_noise
+
+
+def test_answer_origin_reports_what_actually_ran():
+    from papertrail import config, qa
+    assert qa.answer_origin(config.MODE_QUOTES, False, False) == qa.ORIGIN_QUOTE
+    assert qa.answer_origin(config.MODE_HF, True, True) == qa.ORIGIN_AI
+    assert qa.answer_origin(config.MODE_HF, True, False) == qa.ORIGIN_UNSUPPORTED
+    assert qa.answer_origin(config.MODE_OLLAMA, False, False) == qa.ORIGIN_UNAVAILABLE
+
+
+def test_export_includes_answer_type():
+    from papertrail.qa import export_conversation_markdown
+    doc = {"source_name": "d", "messages": [
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "answer_text": "a", "origin": "AI-written"},
+    ]}
+    assert "Answer type: AI-written" in export_conversation_markdown(doc)

@@ -31,8 +31,11 @@ ANSWER_MODES = [MODE_QUOTES, MODE_OLLAMA, MODE_HF]
 
 # ── LLM — Hugging Face ────────────────────────────────────────────────────────
 
-HF_MODEL          = "mistralai/Mistral-7B-Instruct-v0.2"
-HF_API_URL        = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
+# Hugging Face Inference Providers router (OpenAI-compatible). The old
+# api-inference.huggingface.co endpoint has been retired. The model must be served by
+# some inference provider; override with the HF_MODEL env var if this one isn't available.
+HF_MODEL          = os.environ.get("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
+HF_API_URL        = "https://router.huggingface.co/v1/chat/completions"
 HF_TIMEOUT        = 45   # seconds
 HF_MAX_NEW_TOKENS = 150
 HF_TEMPERATURE    = 0.2

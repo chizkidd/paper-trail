@@ -23,8 +23,9 @@ from papertrail.retrieval.mmr import (
 )
 from papertrail.retrieval.evidence import build_evidence_pack, format_extractive_answer
 from papertrail.llm.guard import clean_generated, is_supported
-from papertrail.llm.hf import generate_answer_hf, generate_answer_hf_stream
-from papertrail.llm.ollama import generate_answer_ollama, generate_answer_ollama_stream
+from papertrail.llm.base import OK
+from papertrail.llm.hf import generate_answer_hf_stream
+from papertrail.llm.ollama import generate_answer_ollama_stream
 from papertrail.utils.text import (
     as_text, is_noise_sentence, match_label,
     normalize_ws, remove_display_latex_anywhere, split_sentences,
@@ -39,13 +40,25 @@ ORIGIN_UNSUPPORTED = "quote · AI answer not supported by document"
 ORIGIN_UNAVAILABLE = "quote · AI unavailable"
 
 
-def answer_origin(mode: str, produced: bool, supported: bool) -> str:
+def answer_origin(mode: str, produced: bool, supported: bool, reason: str = "") -> str:
     """What actually produced the shown answer (not merely which mode was selected)."""
     if mode == config.MODE_QUOTES:
         return ORIGIN_QUOTE
     if not produced:
-        return ORIGIN_UNAVAILABLE
+        return f"{ORIGIN_UNAVAILABLE} ({reason})" if reason and reason != OK else ORIGIN_UNAVAILABLE
     return ORIGIN_AI if supported else ORIGIN_UNSUPPORTED
+
+
+def _generate(mode: str, question: str, evidence_pack: str) -> Tuple[str, str]:
+    """Run the selected LLM to completion. Returns (text, status); text is '' on failure."""
+    if mode == config.MODE_OLLAMA:
+        stream = generate_answer_ollama_stream(question, evidence_pack)
+    elif mode == config.MODE_HF:
+        stream = generate_answer_hf_stream(question, evidence_pack)
+    else:
+        return "", OK
+    text = stream.collect()
+    return text, stream.status
 
 
 def _text_hash(text: str) -> str:
@@ -214,14 +227,11 @@ def answer_question(
         q_emb=q_emb,
     )
 
-    generated, is_generated = "", False
-    if mode == config.MODE_OLLAMA:
-        generated, is_generated = generate_answer_ollama(question, evidence_pack)
-    elif mode == config.MODE_HF:
-        generated, is_generated = generate_answer_hf(question, evidence_pack)
+    generated, llm_status = _generate(mode, question, evidence_pack)
+    is_generated = bool(generated)
 
     supported = is_generated and is_supported(generated, evidence_pack, retriever.embedder)
-    source_label = answer_origin(mode, is_generated, supported)
+    source_label = answer_origin(mode, is_generated, supported, llm_status)
     if supported:
         answer_text = remove_display_latex_anywhere(clean_generated(as_text(generated)))
     else:
@@ -272,7 +282,7 @@ def answer_question_stream(
     _empty: dict = {
         "attr_text": "", "extras": [], "score": 0.0,
         "css_class": "", "match_lbl": "", "focused": "",
-        "source_label": "", "extractive_fallback": "", "verify": None, "mode": mode,
+        "source_label": "", "extractive_fallback": "", "verify": None, "mode": mode, "llm": None,
     }
     if not reranked or reranked[0][1] < 0.01:
         msg = "Nothing relevant found. Try rephrasing using keywords from the document."
@@ -335,6 +345,8 @@ def answer_question_stream(
         "source_label":        source_label,
         "extractive_fallback": extractive,
         "mode":                mode,
+        # LLMStream (has .status after iteration) in AI modes, else None
+        "llm":                 token_stream if mode != config.MODE_QUOTES else None,
         # None in quote mode; else callable(text) -> bool run after streaming finishes.
         "verify": (
             None if mode == config.MODE_QUOTES
@@ -407,14 +419,11 @@ def answer_across_docs(
         q_emb=q_emb,
     )
 
-    generated, is_generated = "", False
-    if mode == config.MODE_OLLAMA:
-        generated, is_generated = generate_answer_ollama(question, evidence_pack)
-    elif mode == config.MODE_HF:
-        generated, is_generated = generate_answer_hf(question, evidence_pack)
+    generated, llm_status = _generate(mode, question, evidence_pack)
+    is_generated = bool(generated)
 
     supported = is_generated and is_supported(generated, evidence_pack, best_retriever.embedder)
-    source_label = answer_origin(mode, is_generated, supported)
+    source_label = answer_origin(mode, is_generated, supported, llm_status)
     if supported:
         answer_text = remove_display_latex_anywhere(clean_generated(as_text(generated)))
     else:

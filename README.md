@@ -133,7 +133,7 @@ HYBRID_ALPHA       = 0.45
 TFIDF_MAX_FEATURES = 30000
 CHUNK_SIZE         = 800
 CHUNK_OVERLAP      = 30
-HF_MODEL           = "mistralai/Mistral-7B-Instruct-v0.2"
+HF_MODEL           = os.environ.get("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
 OLLAMA_MODEL       = "llama3.1:8b"
 OLLAMA_URL         = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
 PDF_MAX_BYTES      = 50 * 1024 * 1024   # 50 MB
@@ -159,11 +159,18 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-To use a **Hugging Face token** (avoids public rate limits), create `.streamlit/secrets.toml`:
+The **AI-written · Hugging Face** mode calls the Hugging Face Inference Providers router
+(`router.huggingface.co`) and **requires** a token with the *Make calls to Inference Providers*
+permission. Create `.streamlit/secrets.toml` (or the app's Secrets on Streamlit Cloud):
 
 ```toml
 HF_TOKEN = "hf_..."
 ```
+
+Free accounts get a small monthly credit allowance; when it runs out the answer tag reads
+`quote · AI unavailable (HF free credits used up or rate limited)`. To use a different model, set the
+`HF_MODEL` env var to any model served by an inference provider. **Ollama** mode only works where an
+Ollama server is reachable (see below), not on Streamlit Cloud.
 
 To use a **remote Ollama instance**, set the env var:
 

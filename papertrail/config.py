@@ -27,7 +27,19 @@ CHUNK_OVERLAP = 100   # words of overlap between adjacent chunks
 MODE_QUOTES = "Document quotes (default)"
 MODE_OLLAMA = "AI-written · Ollama (may paraphrase)"
 MODE_HF     = "AI-written · Hugging Face (may paraphrase)"
-ANSWER_MODES = [MODE_QUOTES, MODE_OLLAMA, MODE_HF]
+MODE_GROQ   = "AI-written · Groq (may paraphrase)"
+ANSWER_MODES = [MODE_QUOTES, MODE_GROQ, MODE_HF, MODE_OLLAMA]
+
+# ── LLM — shared (OpenAI-compatible providers) ────────────────────────────────
+
+LLM_TIMEOUT        = 45   # seconds
+LLM_MAX_NEW_TOKENS = 150
+LLM_TEMPERATURE    = 0.2
+
+# ── LLM — Groq (free tier) ────────────────────────────────────────────────────
+
+GROQ_MODEL   = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # ── LLM — Hugging Face ────────────────────────────────────────────────────────
 
@@ -36,9 +48,9 @@ ANSWER_MODES = [MODE_QUOTES, MODE_OLLAMA, MODE_HF]
 # some inference provider; override with the HF_MODEL env var if this one isn't available.
 HF_MODEL          = os.environ.get("HF_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
 HF_API_URL        = "https://router.huggingface.co/v1/chat/completions"
-HF_TIMEOUT        = 45   # seconds
-HF_MAX_NEW_TOKENS = 150
-HF_TEMPERATURE    = 0.2
+HF_TIMEOUT        = LLM_TIMEOUT
+HF_MAX_NEW_TOKENS = LLM_MAX_NEW_TOKENS
+HF_TEMPERATURE    = LLM_TEMPERATURE
 
 # ── LLM — Ollama ──────────────────────────────────────────────────────────────
 

@@ -12,7 +12,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 
-from papertrail import cache as doc_cache
+from papertrail import cache as doc_cache, config
 from papertrail.ingest.chunking import prepare_chunks
 from papertrail.retrieval.retriever import DocRetriever
 from papertrail.retrieval.rerank import rerank
@@ -22,6 +22,7 @@ from papertrail.retrieval.mmr import (
     focused_supporting_fallback,
 )
 from papertrail.retrieval.evidence import build_evidence_pack, format_extractive_answer
+from papertrail.llm.guard import clean_generated, is_supported
 from papertrail.llm.hf import generate_answer_hf, generate_answer_hf_stream
 from papertrail.llm.ollama import generate_answer_ollama, generate_answer_ollama_stream
 from papertrail.utils.text import (
@@ -164,7 +165,7 @@ def export_conversation_markdown(doc: dict) -> str:
 def answer_question(
     retriever: DocRetriever,
     question: str,
-    mode: str = "Hugging Face (best effort)",
+    mode: str = config.MODE_QUOTES,
 ) -> tuple:
     """
     Full pipeline: hybrid retrieval → rerank → MMR extraction → optional generation.
@@ -197,13 +198,13 @@ def answer_question(
     )
 
     generated, is_generated = "", False
-    if mode == "Local (Ollama)":
+    if mode == config.MODE_OLLAMA:
         generated, is_generated = generate_answer_ollama(question, evidence_pack)
-    elif mode == "Hugging Face (best effort)":
+    elif mode == config.MODE_HF:
         generated, is_generated = generate_answer_hf(question, evidence_pack)
 
-    if is_generated:
-        answer_text  = remove_display_latex_anywhere(as_text(generated))
+    if is_generated and is_supported(generated, evidence_pack, retriever.embedder):
+        answer_text  = remove_display_latex_anywhere(clean_generated(as_text(generated)))
         source_label = "generated answer"
     else:
         answer_text  = remove_display_latex_anywhere(format_extractive_answer(answer_sents, attr_text))
@@ -235,13 +236,15 @@ def answer_question(
 def answer_question_stream(
     retriever: DocRetriever,
     question: str,
-    mode: str = "Hugging Face (best effort)",
+    mode: str = config.MODE_QUOTES,
 ) -> Tuple[dict, Iterator[str]]:
     """
     Fast retrieval phase (blocking ~100ms) + lazy LLM token stream.
     Returns (metadata_dict, token_iterator).
     For Structured mode the iterator yields the extractive answer in one chunk.
-    For Ollama/HF the iterator yields live tokens as they arrive.
+    For Ollama/HF the iterator yields live tokens as they arrive; the caller must
+    then run metadata["verify"](text) and fall back to metadata["extractive_fallback"]
+    if it returns False.
     """
     n_chunks   = len(retriever.chunks)
     dynamic_k  = min(40, max(20, n_chunks // 5))
@@ -252,7 +255,7 @@ def answer_question_stream(
     _empty: dict = {
         "attr_text": "", "extras": [], "score": 0.0,
         "css_class": "", "match_lbl": "", "focused": "",
-        "source_label": "no result", "extractive_fallback": "",
+        "source_label": "no result", "extractive_fallback": "", "verify": None,
     }
     if not reranked or reranked[0][1] < 0.01:
         msg = "Nothing relevant found. Try rephrasing using keywords from the document."
@@ -297,10 +300,10 @@ def answer_question_stream(
         if snippet:
             extras.append((snippet, score))
 
-    if mode == "Local (Ollama)":
+    if mode == config.MODE_OLLAMA:
         token_stream: Iterator[str] = generate_answer_ollama_stream(question, evidence_pack)
         source_label = "generated answer"
-    elif mode == "Hugging Face (best effort)":
+    elif mode == config.MODE_HF:
         token_stream = generate_answer_hf_stream(question, evidence_pack)
         source_label = "generated answer"
     else:
@@ -316,6 +319,11 @@ def answer_question_stream(
         "focused":             focused,
         "source_label":        source_label,
         "extractive_fallback": extractive,
+        # None in quote mode; else callable(text) -> bool run after streaming finishes.
+        "verify": (
+            None if mode == config.MODE_QUOTES
+            else lambda text: is_supported(text, evidence_pack, retriever.embedder)
+        ),
     }
     return metadata, token_stream
 
@@ -323,7 +331,7 @@ def answer_question_stream(
 def answer_across_docs(
     documents: List[Dict],
     question: str,
-    mode: str = "Hugging Face (best effort)",
+    mode: str = config.MODE_QUOTES,
 ) -> tuple:
     """
     Cross-document search: queries all loaded documents and merges by reranker score.
@@ -384,13 +392,13 @@ def answer_across_docs(
     )
 
     generated, is_generated = "", False
-    if mode == "Local (Ollama)":
+    if mode == config.MODE_OLLAMA:
         generated, is_generated = generate_answer_ollama(question, evidence_pack)
-    elif mode == "Hugging Face (best effort)":
+    elif mode == config.MODE_HF:
         generated, is_generated = generate_answer_hf(question, evidence_pack)
 
-    if is_generated:
-        answer_text  = remove_display_latex_anywhere(as_text(generated))
+    if is_generated and is_supported(generated, evidence_pack, best_retriever.embedder):
+        answer_text  = remove_display_latex_anywhere(clean_generated(as_text(generated)))
         source_label = "generated answer"
     else:
         answer_text  = remove_display_latex_anywhere(format_extractive_answer(answer_sents, attr_text))

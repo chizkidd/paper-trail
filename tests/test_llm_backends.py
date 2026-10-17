@@ -10,6 +10,7 @@ from papertrail.llm import base, groq, hf, ollama  # noqa: E402
 class _Resp:
     def __init__(self, status=200, lines=()):
         self.status_code = status
+        self.text = ""
         self._lines = lines
 
     def iter_lines(self):
@@ -124,3 +125,62 @@ def test_groq_mode_dispatch(monkeypatch):
     monkeypatch.setattr(requests, "post", lambda *a, **k: _Resp(200, _sse("ok")))
     assert qa._generate(config.MODE_GROQ, "q", "ev") == ("ok", base.OK)
     assert qa._generate(config.MODE_QUOTES, "q", "ev") == ("", base.OK)
+
+
+class _Json:
+    def __init__(self, data):
+        self.status_code = 200
+        self._data = data
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._data
+
+
+def test_groq_retries_with_discovered_model(monkeypatch):
+    monkeypatch.setattr(groq, "_discovered", None)
+    models_used = []
+
+    def fake_post(url, **kw):
+        models_used.append(kw["json"]["model"])
+        return _Resp(400) if kw["json"]["model"] == "retired-model" else _Resp(200, _sse("fine"))
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Json({"data": [
+        {"id": "whisper-large-v3"}, {"id": "openai/gpt-oss-safeguard-20b"},
+        {"id": "llama-3.1-8b-instant"}, {"id": "llama-3.3-70b-versatile"},
+    ]}))
+    monkeypatch.setattr(groq.config, "GROQ_MODEL", "retired-model")
+    s = groq.generate_answer_groq_stream("q", "ev")
+    assert s.collect() == "fine" and s.status == base.OK
+    assert models_used == ["retired-model", "llama-3.3-70b-versatile"]
+    assert groq._discovered == "llama-3.3-70b-versatile"
+
+
+def test_groq_default_is_account_available_model_and_gpt_oss_gets_reasoning_budget(monkeypatch):
+    from papertrail import config
+    assert config.GROQ_MODEL == "openai/gpt-oss-20b"
+    seen = {}
+
+    def fake(url, **kw):
+        seen.update(kw["json"])
+        return _Resp(200, _sse("ok"))
+
+    monkeypatch.setattr(groq, "_discovered", None)
+    monkeypatch.setattr(requests, "post", fake)
+    groq.generate_answer_groq_stream("q", "ev").collect()
+    assert seen["reasoning_effort"] == "low" and seen["max_tokens"] >= 500
+
+
+def test_groq_unavailable_when_discovery_fails(monkeypatch):
+    monkeypatch.setattr(groq, "_discovered", None)
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _Resp(404))
+
+    def boom(*a, **k):
+        raise requests.exceptions.ConnectionError()
+
+    monkeypatch.setattr(requests, "get", boom)
+    s = groq.generate_answer_groq_stream("q", "ev")
+    assert s.collect() == "" and s.status == base.UNAVAILABLE

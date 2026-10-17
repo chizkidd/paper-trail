@@ -38,7 +38,7 @@ LLM_TEMPERATURE    = 0.2
 
 # ── LLM — Groq (free tier) ────────────────────────────────────────────────────
 
-GROQ_MODEL   = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL   = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # ── LLM — Hugging Face ────────────────────────────────────────────────────────

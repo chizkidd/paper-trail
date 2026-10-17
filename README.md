@@ -102,7 +102,7 @@ Maximal Marginal Relevance (MMR) selects a diverse set of high-relevance sentenc
 | Mode | Description |
 |------|-------------|
 | **Document quotes** (default) | 1–2 sentences copied verbatim from the document; no LLM, no hallucination, deterministic |
-| **AI-written · Groq** | Groq's free tier (`llama-3.1-8b-instant` by default) writes a short answer; needs `GROQ_API_KEY` |
+| **AI-written · Groq** | Groq's free tier (`openai/gpt-oss-20b` by default; auto-switches if Groq rejects the model) writes a short answer; needs `GROQ_API_KEY` |
 | **AI-written · Ollama** | Local LLM (`llama3.1:8b` by default) writes a short answer from the retrieved evidence |
 | **AI-written · Hugging Face** | Serverless Mistral-7B writes a short answer from the retrieved evidence |
 

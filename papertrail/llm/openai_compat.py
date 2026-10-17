@@ -46,8 +46,12 @@ def stream_chat(
     model: str,
     token: Optional[str],
     provider: str,
+    extra: Optional[dict] = None,
 ) -> LLMStream:
-    """Stream tokens from an OpenAI-compatible /chat/completions endpoint."""
+    """Stream tokens from an OpenAI-compatible /chat/completions endpoint.
+
+    `extra` is merged into the request body (e.g. max_tokens, reasoning_effort).
+    """
 
     def source(st: LLMStream):
         if not token:
@@ -66,13 +70,15 @@ def stream_chat(
                     "max_tokens":  config.LLM_MAX_NEW_TOKENS,
                     "temperature": config.LLM_TEMPERATURE,
                     "stream":      True,
+                    **(extra or {}),
                 },
                 timeout=config.LLM_TIMEOUT,
                 stream=True,
             )
             if resp.status_code >= 400:
                 st.status = _status_for_http(resp.status_code)
-                logger.warning("%s returned %d for model %s.", provider, resp.status_code, model)
+                logger.warning("%s returned %d for model %s: %s",
+                               provider, resp.status_code, model, (resp.text or "")[:300])
                 return
             for raw in resp.iter_lines():
                 if not raw:

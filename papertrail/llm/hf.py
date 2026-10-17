@@ -23,22 +23,25 @@ def _evidence_overlap_ratio(answer: str, evidence: str) -> float:
     return sum(1 for w in a if w in e) / max(1, len(a)) if a else 0.0
 
 
+def _build_prompt(question: str, context: str) -> str:
+    # Mistral-Instruct uses [INST]...[/INST] chat format
+    return (
+        "[INST] Answer the QUESTION using ONLY the EVIDENCE below.\n"
+        'If the evidence is insufficient, say: "I cannot determine this from the document."\n\n'
+        "Rules:\n"
+        "- Answer in 1 to 3 plain sentences. No bullet points, no headings.\n"
+        "- Do not include citations, bracket tags, or source references; the UI shows the source.\n"
+        "- Do not use outside knowledge.\n\n"
+        f"EVIDENCE:\n{context}\n\n"
+        f"QUESTION:\n{question} [/INST]"
+    )
+
+
 def generate_answer_hf_stream(question: str, context: str) -> Iterator[str]:
     """Yield response tokens from the HF Inference API SSE stream."""
     if not _SUPPORT:
         return
-    prompt = (
-        "[INST] You are a careful assistant. Answer the QUESTION using ONLY the EVIDENCE below.\n"
-        'If the evidence is insufficient, say: "I cannot determine this from the document."\n\n'
-        "Rules:\n"
-        "- Write a direct answer first (1 to 3 sentences).\n"
-        '- Then add "Details" as bullet points if helpful.\n'
-        "- Every factual claim must include a citation in parentheses using the evidence tag,\n"
-        "  for example: (§ Methods · p. 3) or (Chunk: 12).\n"
-        "- Do not invent citations. Do not use outside knowledge.\n\n"
-        f"EVIDENCE:\n{context}\n\n"
-        f"QUESTION:\n{question} [/INST]"
-    )
+    prompt = _build_prompt(question, context)
     headers = {"Content-Type": "application/json"}
     if HF_TOKEN:
         headers["Authorization"] = f"Bearer {HF_TOKEN}"
@@ -60,7 +63,7 @@ def generate_answer_hf_stream(question: str, context: str) -> Iterator[str]:
             stream=True,
         )
         if resp.status_code in (503, 422):
-            logger.debug("HF API returned %d for streaming request.", resp.status_code)
+            logger.warning("HF API returned %d for streaming request.", resp.status_code)
             return
         resp.raise_for_status()
         for raw_line in resp.iter_lines():
@@ -92,19 +95,7 @@ def generate_answer_hf(question: str, context: str) -> Tuple[str, bool]:
     if not _SUPPORT:
         return "", False
 
-    # Mistral-Instruct uses [INST]...[/INST] chat format
-    prompt = (
-        "[INST] You are a careful assistant. Answer the QUESTION using ONLY the EVIDENCE below.\n"
-        'If the evidence is insufficient, say: "I cannot determine this from the document."\n\n'
-        "Rules:\n"
-        "- Write a direct answer first (1 to 3 sentences).\n"
-        '- Then add "Details" as bullet points if helpful.\n'
-        "- Every factual claim must include a citation in parentheses using the evidence tag,\n"
-        "  for example: (§ Methods · p. 3) or (Chunk: 12).\n"
-        "- Do not invent citations. Do not use outside knowledge.\n\n"
-        f"EVIDENCE:\n{context}\n\n"
-        f"QUESTION:\n{question} [/INST]"
-    )
+    prompt = _build_prompt(question, context)
 
     headers = {"Content-Type": "application/json"}
     if HF_TOKEN:
@@ -126,7 +117,7 @@ def generate_answer_hf(question: str, context: str) -> Tuple[str, bool]:
             timeout=config.HF_TIMEOUT,
         )
         if resp.status_code == 503:
-            logger.debug("HF model loading (503), skipping generation.")
+            logger.warning("HF model loading (503), skipping generation.")
             return "", False
         resp.raise_for_status()
         data = resp.json()

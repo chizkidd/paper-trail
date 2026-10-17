@@ -375,10 +375,8 @@ if active_doc:
             st.markdown(f'<div class="msg-user">{html.escape(msg.get("content",""))}</div>',
                         unsafe_allow_html=True)
         else:
-            _src = msg.get("source_label", "")
-            _src_html = f'<div class="msg-label">{html.escape(_src)}</div>' if _src else ""
             st.markdown(
-                f'<div class="msg-bot">{_src_html}'
+                f'<div class="msg-bot">'
                 f'<p>{_safe_md_to_html(msg.get("answer_text") or "")}</p></div>',
                 unsafe_allow_html=True,
             )
@@ -410,7 +408,7 @@ if retriever:
 
         typing_ph = st.empty()
         typing_ph.markdown(
-            '<div class="msg-bot"><div class="msg-label">assistant</div>'
+            '<div class="msg-bot">'
             '<p>Typing<span style="opacity:.6">▌</span></p></div>',
             unsafe_allow_html=True,
         )
@@ -420,21 +418,18 @@ if retriever:
                 _res = answer_across_docs(
                     st.session_state.documents, q, mode=st.session_state.answer_mode
                 )
-                _text, focused, source_label, css_class, match_lbl, score, extras, attr_text = _res
+                _text, focused, _label, css_class, match_lbl, score, extras, attr_text = _res
                 typing_ph.empty()
-                answer_text = stream_words_into_bubble(_text, source_label=source_label)
+                answer_text = stream_words_into_bubble(_text)
             else:
                 metadata, token_stream = answer_question_stream(
                     retriever, q, mode=st.session_state.answer_mode
                 )
                 typing_ph.empty()
-                answer_text = stream_words_into_bubble(
-                    token_stream, source_label=metadata["source_label"]
-                )
+                answer_text = stream_words_into_bubble(token_stream)
                 if not answer_text.strip():
                     answer_text = metadata["extractive_fallback"]
-                    answer_text = stream_words_into_bubble(answer_text, source_label="grounded answer")
-                source_label = metadata["source_label"]
+                    answer_text = stream_words_into_bubble(answer_text)
                 css_class    = metadata["css_class"]
                 match_lbl    = metadata["match_lbl"]
                 attr_text    = metadata["attr_text"]
@@ -481,7 +476,6 @@ if retriever:
                 "answer_text":  answer_text,
                 "attr_text":    attr_text,
                 "extras":       extras,
-                "source_label": source_label,
                 "css_class":    css_class,
                 "match_lbl":    match_lbl,
             })

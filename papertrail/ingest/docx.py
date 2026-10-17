@@ -13,7 +13,7 @@ def load_docx(file_bytes: bytes) -> Tuple[str, Dict[int, str], Dict[int, int], s
     """
     Extract text from a .docx file.
     Returns (text, section_map, page_map, err).
-    section_map: paragraph_index → heading text (detected via Heading styles).
+    section_map: body-paragraph index → governing heading text (headings are not emitted as body text).
     page_map: all None — DOCX has no reliable page numbers; attribution shows section only.
     err: "" on success, human-readable message on failure.
     """
@@ -39,7 +39,9 @@ def load_docx(file_bytes: bytes) -> Tuple[str, Dict[int, str], Dict[int, int], s
     last_heading = ""
 
     for para in doc.paragraphs:
-        text = (para.text or "").strip()
+        # Drop superscript runs (footnote/citation markers) so "…depths.65" doesn't leak digits.
+        text = "".join(r.text for r in para.runs if not r.font.superscript) or (para.text or "")
+        text = text.strip()
         if not text:
             continue
 
@@ -49,9 +51,11 @@ def load_docx(file_bytes: bytes) -> Tuple[str, Dict[int, str], Dict[int, int], s
         )
 
         if is_heading:
+            # Headings live in section_map only; keeping them in body text
+            # glues them onto the next sentence in answers.
             last_heading = text
-            section_map[para_idx] = text
-        elif last_heading:
+            continue
+        if last_heading:
             section_map[para_idx] = last_heading
 
         para_texts.append(text)

@@ -72,7 +72,8 @@ def stream_chat(
             )
             if resp.status_code >= 400:
                 st.status = _status_for_http(resp.status_code)
-                logger.warning("%s returned %d for model %s.", provider, resp.status_code, model)
+                logger.warning("%s returned %d for model %s: %s",
+                               provider, resp.status_code, model, (resp.text or "")[:300])
                 return
             for raw in resp.iter_lines():
                 if not raw:
